@@ -1,0 +1,205 @@
+{% extends 'edi/base.html' %}
+{% block title %}Редактор шаблона {{ tpl.doc_type }} — Docrobot EDI{% endblock %}
+{% block page_title %}Шаблон: {{ tpl.doc_type }}{% endblock %}
+{% block page_sub %}{{ tpl.name }}{% endblock %}
+
+{% block topbar_actions %}
+<a href="{% url 'settings' %}" class="btn btn-secondary">← Назад</a>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+  .editor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .editor-area {
+    font-family: var(--mono); font-size: 12px; line-height: 1.6;
+    background: #070c15; color: #a5f3fc; border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px; resize: vertical;
+    outline: none; min-height: 280px; width: 100%;
+    transition: border-color 0.15s;
+  }
+  .editor-area:focus { border-color: var(--accent); }
+  .preview-box {
+    background: #070c15; border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 14px; font-family: var(--mono); font-size: 11px; color: #86efac;
+    overflow: auto; min-height: 200px; max-height: 400px; white-space: pre;
+  }
+  .var-chip {
+    display: inline-block; background: rgba(59,130,246,0.1); color: var(--accent);
+    border: 1px solid rgba(59,130,246,0.2); border-radius: 4px;
+    padding: 2px 6px; font-size: 10px; font-family: var(--mono);
+    cursor: pointer; margin: 2px; transition: background 0.15s;
+  }
+  .var-chip:hover { background: rgba(59,130,246,0.2); }
+  .result-box {
+    padding: 12px 16px; border-radius: 8px; font-size: 13px; margin-top: 12px;
+  }
+  .result-ok    { background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.25); color: var(--accent2); }
+  .result-error { background: rgba(239,68,68,0.08);  border: 1px solid rgba(239,68,68,0.25);  color: var(--danger); }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<form method="post" id="tpl-form">
+  {% csrf_token %}
+
+  <div class="grid-2 mb24" style="align-items:start;">
+    <!-- Левая: настройки -->
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <div class="card">
+        <div class="card-title">Параметры</div>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <div>
+            <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px;">Название шаблона</label>
+            <input type="text" name="name" value="{{ tpl.name }}" style="width:100%" />
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px;">Content-Type для 1С</label>
+            <input type="text" name="content_type" value="{{ tpl.content_type }}" style="width:100%" />
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <input type="checkbox" name="is_active" id="is_active" {% if tpl.is_active %}checked{% endif %} style="width:16px;height:16px;" />
+            <label for="is_active" style="font-size:12px;cursor:pointer;">Использовать этот шаблон (иначе — GS1 по умолчанию)</label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Переменные для вставки -->
+      <div class="card">
+        <div class="card-title">Вставить переменную</div>
+        <div style="line-height:2;">
+          {% for var in doc_vars %}
+          <span class="var-chip" onclick="insertVar('body_tpl', '{{{{ {var} }}}}')">{{ var }}</span>
+          {% endfor %}
+        </div>
+        <div style="margin-top:8px;font-size:10px;color:var(--text3);">Клик — вставить в шаблон документа</div>
+      </div>
+    </div>
+
+    <!-- Правая: кнопки действий -->
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <div class="card">
+        <div class="card-title">Действия</div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <button type="button" class="btn btn-secondary" onclick="renderPreview()">▶ Тест рендера (без сохранения)</button>
+          <button type="button" class="btn btn-warn" onclick="testSend()">→ Тест отправки в 1С</button>
+          <hr style="border:none;border-top:1px solid var(--border);">
+          <button type="submit" class="btn btn-primary">💾 Сохранить шаблон</button>
+        </div>
+        <div id="action-result"></div>
+      </div>
+      <div class="card" id="preview-card" style="display:none;">
+        <div class="flex-between mb16">
+          <div class="card-title" style="margin:0">Результат рендера</div>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="copyPreview()">📋</button>
+        </div>
+        <div class="preview-box" id="preview-output"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Редакторы -->
+  <div class="editor-grid">
+    <div>
+      <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--text2);">
+        Шаблон документа (body_tpl)
+        <span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:8px;">основной XML-документ</span>
+      </div>
+      <textarea class="editor-area" name="body_tpl" id="body_tpl" rows="20">{{ tpl.body_tpl }}</textarea>
+    </div>
+    <div>
+      <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--text2);">
+        Шаблон позиции (position_tpl)
+        <span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:8px;">вставляется вместо {{positions}}</span>
+      </div>
+      <div style="margin-bottom:8px;">
+        {% for var in pos_vars %}
+        <span class="var-chip" onclick="insertVar('position_tpl', '{{{{ {var} }}}}')">{{ var }}</span>
+        {% endfor %}
+      </div>
+      <textarea class="editor-area" name="position_tpl" id="position_tpl" rows="16">{{ tpl.position_tpl }}</textarea>
+    </div>
+  </div>
+
+</form>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const CSRF = '{{ csrf_token }}';
+const DOC_TYPE = '{{ tpl.doc_type }}';
+
+function insertVar(fieldId, text) {
+  const el = document.getElementById(fieldId);
+  const pos = el.selectionStart;
+  el.value = el.value.slice(0, pos) + text + el.value.slice(el.selectionEnd);
+  el.focus();
+  el.selectionStart = el.selectionEnd = pos + text.length;
+}
+
+async function renderPreview() {
+  const body = document.getElementById('body_tpl').value;
+  const pos  = document.getElementById('position_tpl').value;
+  const r = await fetch('/api/test-xml/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+    body: JSON.stringify({ doc_type: DOC_TYPE, body_tpl: body, position_tpl: pos }),
+  });
+  const d = await r.json();
+  const card = document.getElementById('preview-card');
+  const out  = document.getElementById('preview-output');
+  card.style.display = 'block';
+  if (d.success) {
+    out.textContent = d.xml;
+    out.style.color = '#86efac';
+  } else {
+    out.textContent = 'Ошибка: ' + d.error;
+    out.style.color = 'var(--danger)';
+  }
+}
+
+async function testSend() {
+  // Сначала рендерим, потом отправляем
+  const body = document.getElementById('body_tpl').value;
+  const pos  = document.getElementById('position_tpl').value;
+
+  const rRender = await fetch('/api/test-xml/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+    body: JSON.stringify({ doc_type: DOC_TYPE, body_tpl: body, position_tpl: pos }),
+  });
+  const dRender = await rRender.json();
+  if (!dRender.success) {
+    showResult(`Ошибка рендера: ${dRender.error}`, false);
+    return;
+  }
+
+  // Показываем XML
+  document.getElementById('preview-card').style.display = 'block';
+  document.getElementById('preview-output').textContent = dRender.xml;
+
+  // Отправляем в 1С
+  const rSend = await fetch('/api/test-send/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+    body: JSON.stringify({ doc_type: DOC_TYPE, xml: dRender.xml }),
+  });
+  const dSend = await rSend.json();
+  if (dSend.success) {
+    showResult(`✓ 1С ответил HTTP ${dSend.http_status}: ${dSend.response.slice(0,120)}`, true);
+  } else {
+    showResult(`✗ Ошибка: ${dSend.error || `HTTP ${dSend.http_status}: ${dSend.response?.slice(0,120)}`}`, false);
+  }
+}
+
+function showResult(msg, ok) {
+  const el = document.getElementById('action-result');
+  el.innerHTML = `<div class="result-box ${ok ? 'result-ok' : 'result-error'}" style="margin-top:12px;font-size:12px;">${msg}</div>`;
+}
+
+function copyPreview() {
+  navigator.clipboard.writeText(document.getElementById('preview-output').textContent)
+    .then(() => toast('XML скопирован', 'success'));
+}
+</script>
+{% endblock %}

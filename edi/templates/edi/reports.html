@@ -1,0 +1,119 @@
+{% extends 'edi/base.html' %}
+{% block title %}Отчёты — Docrobot EDI{% endblock %}
+{% block page_title %}Отчёты и аналитика{% endblock %}
+{% block page_sub %}Статистика документооборота{% endblock %}
+
+{% block topbar_actions %}
+<form method="get" style="display:flex;gap:8px;align-items:center;">
+  <select name="days" onchange="this.form.submit()" style="font-size:12px;">
+    <option value="7"  {% if days == 7  %}selected{% endif %}>7 дней</option>
+    <option value="30" {% if days == 30 %}selected{% endif %}>30 дней</option>
+    <option value="90" {% if days == 90 %}selected{% endif %}>90 дней</option>
+  </select>
+</form>
+<a href="{% url 'reports_export' %}?days={{ days }}" class="btn btn-success">⬇ Скачать CSV</a>
+{% endblock %}
+
+{% block content %}
+
+<!-- Сводные числа -->
+<div class="stats-grid mb24">
+  <div class="stat-card" style="--accent-color:var(--accent)">
+    <div class="stat-label">Документов за период</div>
+    <div class="stat-value blue">{{ total_period }}</div>
+  </div>
+  <div class="stat-card" style="--accent-color:var(--accent2)">
+    <div class="stat-label">Успешно отправлено</div>
+    <div class="stat-value green">{{ sent_count }}</div>
+  </div>
+  <div class="stat-card" style="--accent-color:var(--warn)">
+    <div class="stat-label">С ошибкой (повтор)</div>
+    <div class="stat-value warn">{{ error_count }}</div>
+  </div>
+  <div class="stat-card" style="--accent-color:var(--danger)">
+    <div class="stat-label">Не удалось отправить</div>
+    <div class="stat-value red">{{ failed_count }}</div>
+  </div>
+</div>
+
+<div class="grid-2 mb24">
+  <!-- График по дням -->
+  <div class="card">
+    <div class="card-title">Динамика по дням</div>
+    <div id="daily-chart" style="display:flex;align-items:flex-end;gap:3px;height:100px;"></div>
+    <div id="daily-labels" style="display:flex;gap:3px;margin-top:4px;"></div>
+  </div>
+
+  <!-- По типам документов -->
+  <div class="card">
+    <div class="card-title">По типам документов</div>
+    {% for row in by_type %}
+    {% with max_cnt=by_type.0.cnt %}
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+      <span class="badge badge-{{ row.doc_type }}" style="width:70px;justify-content:center;">{{ row.doc_type }}</span>
+      <div style="flex:1;background:var(--surface2);border-radius:3px;height:20px;overflow:hidden;">
+        <div style="width:{% widthratio row.cnt max_cnt 100 %}%;height:100%;background:var(--accent);border-radius:3px;opacity:0.8;"></div>
+      </div>
+      <span style="font-family:var(--mono);font-size:13px;font-weight:600;width:32px;">{{ row.cnt }}</span>
+    </div>
+    {% endwith %}
+    {% empty %}
+    <div class="empty"><div class="empty-icon">📊</div><p>Нет данных за период</p></div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- Топ поставщиков -->
+<div class="table-wrap">
+  <div class="table-toolbar">
+    <span style="font-size:12px;font-weight:600;">Топ поставщиков за {{ days }} дней</span>
+  </div>
+  <table>
+    <thead><tr><th>#</th><th>Поставщик</th><th>Документов</th><th>Доля</th></tr></thead>
+    <tbody>
+      {% for s in top_suppliers %}
+      <tr>
+        <td class="td-mono">{{ forloop.counter }}</td>
+        <td>{{ s.supplier_name|default:"(не указан)" }}</td>
+        <td class="td-mono" style="color:var(--accent);font-weight:600;">{{ s.cnt }}</td>
+        <td>
+          {% if total_period %}
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div style="width:80px;background:var(--surface2);border-radius:3px;height:6px;">
+              <div style="width:{% widthratio s.cnt total_period 100 %}%;height:100%;background:var(--accent);border-radius:3px;"></div>
+            </div>
+            <span class="td-mono">{% widthratio s.cnt total_period 100 %}%</span>
+          </div>
+          {% endif %}
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="4"><div class="empty"><div class="empty-icon">📈</div><p>Нет данных</p></div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const daily = {{ daily_json|safe }};
+const maxCnt = Math.max(...daily.map(d => d.count), 1);
+const chartEl  = document.getElementById('daily-chart');
+const labelsEl = document.getElementById('daily-labels');
+
+daily.forEach(d => {
+  const h = Math.max(3, Math.round((d.count / maxCnt) * 100));
+  const errH = d.errors > 0 ? Math.max(2, Math.round((d.errors / maxCnt) * 100)) : 0;
+  chartEl.innerHTML += `
+    <div style="display:flex;flex-direction:column;align-items:center;flex:1;gap:0;justify-content:flex-end;">
+      <div style="font-size:9px;color:var(--text2);margin-bottom:2px;">${d.count || ''}</div>
+      <div style="width:100%;display:flex;flex-direction:column;gap:0;">
+        ${errH ? `<div style="width:100%;height:${errH}px;background:var(--danger);opacity:0.6;border-radius:2px 2px 0 0;" title="${d.errors} ошибок"></div>` : ''}
+        <div style="width:100%;height:${h}px;background:var(--accent);opacity:0.8;${errH ? '' : 'border-radius:2px 2px 0 0;'}"></div>
+      </div>
+    </div>`;
+  labelsEl.innerHTML += `<div style="flex:1;text-align:center;font-size:9px;color:var(--text3);">${d.day}</div>`;
+});
+</script>
+{% endblock %}

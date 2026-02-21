@@ -1,0 +1,55 @@
+{% extends 'edi/base.html' %}
+{% block title %}Очередь 1С — Docrobot EDI{% endblock %}
+{% block page_title %}Очередь отправки в 1С{% endblock %}
+{% block page_sub %}Управление доставкой XML-документов{% endblock %}
+
+{% block content %}
+<div class="table-wrap">
+  <div class="table-toolbar">
+    <form method="get" style="display:flex;gap:8px;align-items:center;">
+      <select name="status" onchange="this.form.submit()">
+        <option value="">Все статусы</option>
+        {% for val, label in statuses %}
+        <option value="{{ val }}" {% if filter_status == val %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      {% if filter_status %}
+      <a href="{% url 'queue' %}" class="btn btn-secondary btn-sm">Сброс</a>
+      {% endif %}
+    </form>
+  </div>
+  <table>
+    <thead>
+      <tr><th>Документ</th><th>Тип</th><th>Статус</th><th>Попыток</th><th>HTTP</th><th>Обновлён</th><th>Ошибка</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for entry in entries %}
+      <tr>
+        <td>
+          <a href="{% url 'document_detail' entry.document.pk %}" style="color:var(--accent);font-family:var(--mono);font-size:11px;">
+            {{ entry.document.number|default:entry.document.docrobot_id|truncatechars:20 }}
+          </a>
+        </td>
+        <td><span class="badge badge-{{ entry.document.doc_type }}">{{ entry.document.doc_type }}</span></td>
+        <td><span class="badge badge-{{ entry.status }}">{{ entry.get_status_display }}</span></td>
+        <td class="td-mono">{{ entry.attempts }}</td>
+        <td class="td-mono">{{ entry.http_status|default:"—" }}</td>
+        <td class="td-mono">{{ entry.updated_at|date:"d.m H:i" }}</td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--danger);" title="{{ entry.last_error }}">
+          {{ entry.last_error|truncatechars:50|default:"—" }}
+        </td>
+        <td>
+          {% if entry.status != 'sent' %}
+          <button class="btn btn-warn btn-sm" onclick="retryQueue({{ entry.id }}, this)">↺ Повтор</button>
+          {% else %}
+          <span style="color:var(--accent2);font-size:12px;">✓</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="8"><div class="empty"><div class="empty-icon">⏳</div><p>Очередь пуста</p></div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

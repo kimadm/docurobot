@@ -1,0 +1,210 @@
+{% extends 'edi/base.html' %}
+{% block title %}Подключения — Docrobot EDI{% endblock %}
+{% block page_title %}Подключения{% endblock %}
+{% block page_sub %}Docrobot API и 1С HTTP-сервис{% endblock %}
+
+{% block extra_head %}
+<style>
+  .conn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .status-dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; }
+  .status-ok      { background: var(--accent2); box-shadow: 0 0 6px var(--accent2); }
+  .status-error   { background: var(--danger);  box-shadow: 0 0 6px var(--danger); }
+  .status-unknown { background: #4B5563; }
+  .result-ok    { background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.3); color:var(--accent2); border-radius:8px; padding:12px 16px; font-size:13px; margin-top:12px; }
+  .result-error { background:rgba(239,68,68,0.08);  border:1px solid rgba(239,68,68,0.3);  color:var(--danger);  border-radius:8px; padding:12px 16px; font-size:13px; margin-top:12px; }
+  .result-info  { background:rgba(59,130,246,0.08); border:1px solid rgba(59,130,246,0.3);  color:var(--accent);  border-radius:8px; padding:12px 16px; font-size:13px; margin-top:12px; }
+  .field-row { display:flex; flex-direction:column; gap:5px; margin-bottom:14px; }
+  .field-row label { font-size:11px; color:var(--text3); font-weight:500; }
+  .section-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
+  .section-title { font-size:13px; font-weight:700; color:var(--text1); }
+  .tested-at { font-size:10px; color:var(--text3); }
+  input[type=password]:not(:placeholder-shown) { letter-spacing: 3px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<form method="post" id="conn-form">
+{% csrf_token %}
+
+<div class="conn-grid">
+
+  <!-- ── DOCROBOT ── -->
+  <div class="card">
+    <div class="section-header">
+      <div>
+        <div class="section-title">
+          <span class="status-dot {% if cfg.docrobot_status == 'ok' %}status-ok{% elif cfg.docrobot_status == 'error' %}status-error{% else %}status-unknown{% endif %}"></span>
+          Docrobot API
+        </div>
+        {% if cfg.docrobot_tested_at %}
+        <div class="tested-at">Проверен: {{ cfg.docrobot_tested_at|date:"d.m.Y H:i" }}</div>
+        {% endif %}
+      </div>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="testDocrobot()">▶ Проверить</button>
+    </div>
+
+    <div class="field-row">
+      <label>URL API</label>
+      <input type="url" name="docrobot_url" id="dr_url" value="{{ cfg.docrobot_url }}" placeholder="https://edi-api.docrobot.kz" />
+    </div>
+    <div class="field-row">
+      <label>Логин</label>
+      <input type="text" name="docrobot_username" id="dr_user" value="{{ cfg.docrobot_username }}" placeholder="Food_Factory" autocomplete="username" />
+    </div>
+    <div class="field-row">
+      <label>Пароль {% if cfg.docrobot_password %}<span style="color:var(--accent2);font-size:10px;">● сохранён</span>{% endif %}</label>
+      <input type="password" name="docrobot_password" id="dr_pass" placeholder="Оставьте пустым чтобы не менять" autocomplete="current-password" />
+    </div>
+    <div class="field-row">
+      <label>Интервал опроса (секунды)</label>
+      <input type="number" name="docrobot_poll_interval" value="{{ cfg.docrobot_poll_interval }}" min="10" max="3600" />
+    </div>
+
+    <div id="dr-result"></div>
+  </div>
+
+  <!-- ── 1С ── -->
+  <div class="card">
+    <div class="section-header">
+      <div>
+        <div class="section-title">
+          <span class="status-dot {% if cfg.onec_status == 'ok' %}status-ok{% elif cfg.onec_status == 'error' %}status-error{% else %}status-unknown{% endif %}"></span>
+          1С HTTP-сервис
+        </div>
+        {% if cfg.onec_tested_at %}
+        <div class="tested-at">Проверен: {{ cfg.onec_tested_at|date:"d.m.Y H:i" }}</div>
+        {% endif %}
+      </div>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="testOnec()">▶ Проверить</button>
+    </div>
+
+    <div class="field-row">
+      <label>URL HTTP-сервиса</label>
+      <input type="url" name="onec_url" id="onec_url" value="{{ cfg.onec_url }}" placeholder="http://localhost/hs/docrobot/orders" />
+    </div>
+    <div class="field-row">
+      <label>Логин (Basic Auth)</label>
+      <input type="text" name="onec_username" id="onec_user" value="{{ cfg.onec_username }}" placeholder="Пусто если без авторизации" autocomplete="username" />
+    </div>
+    <div class="field-row">
+      <label>Пароль {% if cfg.onec_password %}<span style="color:var(--accent2);font-size:10px;">● сохранён</span>{% endif %}</label>
+      <input type="password" name="onec_password" id="onec_pass" placeholder="Оставьте пустым чтобы не менять" autocomplete="current-password" />
+    </div>
+    <div class="field-row">
+      <label>Таймаут (секунды)</label>
+      <input type="number" name="onec_timeout" value="{{ cfg.onec_timeout }}" min="5" max="120" />
+    </div>
+
+    <div id="onec-result"></div>
+  </div>
+
+</div>
+
+<!-- ── TELEGRAM ── -->
+<div class="card" style="margin-top:20px;">
+  <div class="section-header">
+    <div class="section-title">📬 Telegram-уведомления</div>
+    <button type="button" class="btn btn-secondary btn-sm" onclick="testTelegram()">▶ Тест сообщения</button>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+    <div class="field-row">
+      <label>Bot Token</label>
+      <input type="text" name="telegram_token" value="{{ cfg.telegram_token }}" placeholder="1234567890:AAF..." />
+    </div>
+    <div class="field-row">
+      <label>Chat ID</label>
+      <input type="text" name="telegram_chat_id" value="{{ cfg.telegram_chat_id }}" placeholder="-1001234567890" />
+    </div>
+  </div>
+  <div id="tg-result"></div>
+</div>
+
+<!-- ── Кнопки ── -->
+<div style="display:flex;justify-content:flex-end;gap:12px;margin-top:20px;">
+  <button type="submit" class="btn btn-primary">💾 Сохранить все настройки</button>
+</div>
+
+</form>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const CSRF = '{{ csrf_token }}';
+
+function showResult(elId, msg, ok, info) {
+  const cls = ok ? 'result-ok' : (info ? 'result-info' : 'result-error');
+  document.getElementById(elId).innerHTML =
+    '<div class="' + cls + '">' + msg + '</div>';
+}
+
+async function testDocrobot() {
+  showResult('dr-result', '⏳ Проверяю авторизацию...', false, true);
+  try {
+    const r = await fetch('/api/test-docrobot/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify({
+        url:      document.getElementById('dr_url').value,
+        username: document.getElementById('dr_user').value,
+        password: document.getElementById('dr_pass').value,
+      }),
+    });
+    const d = await r.json();
+    if (d.success) {
+      showResult('dr-result',
+        '✓ Авторизация успешна!<br>Токен получен: <code style="font-size:11px;">' + d.token_preview + '</code>',
+        true);
+    } else {
+      showResult('dr-result', '✗ Ошибка: ' + (d.error || 'неизвестная ошибка'), false);
+    }
+  } catch(e) { showResult('dr-result', '✗ Сетевая ошибка: ' + e.message, false); }
+}
+
+async function testOnec() {
+  showResult('onec-result', '⏳ Проверяю подключение...', false, true);
+  try {
+    const r = await fetch('/api/test-onec/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify({
+        url:      document.getElementById('onec_url').value,
+        username: document.getElementById('onec_user').value,
+        password: document.getElementById('onec_pass').value,
+      }),
+    });
+    const d = await r.json();
+    if (d.success) {
+      showResult('onec-result',
+        '✓ Сервер доступен! HTTP ' + d.http_status +
+        (d.note ? '<br><small>' + d.note + '</small>' : '') +
+        (d.response ? '<br><code style="font-size:10px;">' + d.response.slice(0,150) + '</code>' : ''),
+        true);
+    } else {
+      showResult('onec-result', '✗ ' + (d.error || 'HTTP ' + d.http_status), false);
+    }
+  } catch(e) { showResult('onec-result', '✗ Сетевая ошибка: ' + e.message, false); }
+}
+
+async function testTelegram() {
+  showResult('tg-result', '⏳ Отправляю тестовое сообщение...', false, true);
+  const token   = document.querySelector('[name=telegram_token]').value;
+  const chat_id = document.querySelector('[name=telegram_chat_id]').value;
+  if (!token || !chat_id) {
+    showResult('tg-result', '✗ Укажите Bot Token и Chat ID', false); return;
+  }
+  try {
+    const r = await fetch('https://api.telegram.org/bot' + token + '/sendMessage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id, text: '✅ Docrobot EDI Gateway — тестовое сообщение' }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      showResult('tg-result', '✓ Сообщение отправлено в Telegram!', true);
+    } else {
+      showResult('tg-result', '✗ Ошибка Telegram: ' + d.description, false);
+    }
+  } catch(e) { showResult('tg-result', '✗ ' + e.message, false); }
+}
+</script>
+{% endblock %}

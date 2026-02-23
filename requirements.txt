@@ -1,0 +1,6 @@
+django>=4.2
+djangorestframework
+requests
+lxml
+python-dotenv
+openpyxl

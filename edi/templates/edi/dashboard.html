@@ -1,0 +1,130 @@
+{% extends 'edi/base.html' %}
+{% load edi_tags %}
+{% block title %}Дашборд — Docrobot EDI{% endblock %}
+{% block page_title %}Дашборд{% endblock %}
+{% block page_sub %}Мониторинг документооборота Docrobot → 1С{% endblock %}
+
+{% block topbar_actions %}
+<a href="{% url 'reports_export' %}" class="btn btn-secondary">⬇ Экспорт CSV</a>
+{% endblock %}
+
+{% block content %}
+
+<!-- ── Статистика ── -->
+<div class="stats-grid">
+  <div class="stat-card" style="--accent-color:var(--accent)">
+    <div class="stat-label">Всего документов</div>
+    <div class="stat-value blue">{{ total_docs }}</div>
+  </div>
+  <div class="stat-card" style="--accent-color:var(--accent2)">
+    <div class="stat-label">Отправлено в 1С</div>
+    <div class="stat-value green">{{ total_sent }}</div>
+  </div>
+  <div class="stat-card" style="--accent-color:var(--warn)">
+    <div class="stat-label">Ожидают</div>
+    <div class="stat-value warn">{{ pending }}</div>
+  </div>
+  <div class="stat-card" style="--accent-color:var(--danger)">
+    <div class="stat-label">Ошибки</div>
+    <div class="stat-value red">{{ total_errors }}</div>
+  </div>
+  {% for type, label in doc_stats.items %}
+  <div class="stat-card">
+    <div class="stat-label">{{ label }}</div>
+    <div class="stat-value">{{ doc_stats|dict_get:type }}</div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="grid-2 mb24">
+  <!-- Последние документы -->
+  <div class="table-wrap">
+    <div class="table-toolbar flex-between">
+      <span style="font-size:12px;font-weight:600;">Последние документы</span>
+      <a href="{% url 'documents' %}" class="btn btn-secondary btn-sm">Все →</a>
+    </div>
+    <table>
+      <thead><tr><th>Тип</th><th>Номер</th><th>Поставщик</th><th>Статус</th><th>Получен</th></tr></thead>
+      <tbody>
+        {% for doc in recent_docs %}
+        <tr onclick="location.href='{% url 'document_detail' doc.pk %}'" style="cursor:pointer">
+          <td><span class="badge badge-{{ doc.doc_type }}">{{ doc.get_doc_type_display }}</span></td>
+          <td class="td-mono">{{ doc.number|default:"—" }}</td>
+          <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ doc.supplier_name|default:"—" }}</td>
+          <td>
+            {% with q=doc.queue_entry %}
+            {% if q %}<span class="badge badge-{{ q.status }}">{{ q.get_status_display }}</span>{% else %}<span class="badge badge-pending">—</span>{% endif %}
+            {% endwith %}
+          </td>
+          <td class="td-mono">{{ doc.received_at|date:"d.m H:i" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5"><div class="empty"><div class="empty-icon">📭</div><p>Документов нет</p></div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Динамика за 7 дней -->
+  <div class="card">
+    <div class="card-title">Документы за 7 дней</div>
+    <div id="week-chart" style="display:flex;align-items:flex-end;gap:6px;height:90px;"></div>
+    <div style="margin-top:12px;">
+      {% if errors %}
+      <div style="font-size:12px;font-weight:600;color:var(--danger);margin-bottom:8px;">⚠ Требуют внимания</div>
+      {% for e in errors %}
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
+        <div>
+          <span class="badge badge-{{ e.document.doc_type }}">{{ e.document.doc_type }}</span>
+          <span style="font-family:var(--mono);font-size:11px;margin-left:6px;">{{ e.document.number }}</span>
+        </div>
+        <button class="btn btn-warn btn-sm" onclick="retryQueue({{ e.id }}, this)">↺ Повтор</button>
+      </div>
+      {% endfor %}
+      {% else %}
+      <div style="color:var(--accent2);font-size:12px;">✓ Ошибок нет</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Последние логи -->
+<div class="table-wrap">
+  <div class="table-toolbar flex-between">
+    <span style="font-size:12px;font-weight:600;">Последние события</span>
+    <a href="{% url 'logs' %}" class="btn btn-secondary btn-sm">Все логи →</a>
+  </div>
+  <table>
+    <thead><tr><th>Время</th><th>Уровень</th><th>Действие</th><th>Сообщение</th></tr></thead>
+    <tbody>
+      {% for log in recent_logs %}
+      <tr>
+        <td class="td-mono">{{ log.created_at|date:"d.m H:i:s" }}</td>
+        <td><span class="badge badge-{% if log.level == 'error' %}error-lvl{% elif log.level == 'warn' %}warn{% else %}info{% endif %}">{{ log.get_level_display }}</span></td>
+        <td class="td-mono">{{ log.action }}</td>
+        <td style="font-size:12px;color:var(--text2);">{{ log.message|truncatechars:80 }}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="4"><div class="empty"><div class="empty-icon">📋</div><p>Логов нет</p></div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const data = {{ seven_days|safe }};
+const max  = Math.max(...data.map(d => d.count), 1);
+const wrap = document.getElementById('week-chart');
+data.forEach(d => {
+  const h = Math.max(4, Math.round((d.count / max) * 90));
+  wrap.innerHTML += `
+    <div style="display:flex;flex-direction:column;align-items:center;flex:1;gap:4px;">
+      <div style="font-size:10px;color:var(--text2);">${d.count}</div>
+      <div style="width:100%;height:${h}px;background:var(--accent);border-radius:3px 3px 0 0;opacity:0.8;"></div>
+      <div style="font-size:9px;color:var(--text3);">${d.day}</div>
+    </div>`;
+});
+</script>
+{% endblock %}

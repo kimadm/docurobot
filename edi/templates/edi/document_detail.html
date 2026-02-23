@@ -1,0 +1,148 @@
+{% extends 'edi/base.html' %}
+{% block title %}{{ doc }} — Docrobot EDI{% endblock %}
+{% block page_title %}{{ doc.get_doc_type_display }} №{{ doc.number }}{% endblock %}
+{% block page_sub %}Docrobot ID: {{ doc.docrobot_id }}{% endblock %}
+
+{% block topbar_actions %}
+{% if queue and queue.status != 'sent' %}
+<button class="btn btn-warn" onclick="retryQueue({{ queue.id }}, this)">↺ Повторить отправку</button>
+{% endif %}
+{% if queue and queue.status == 'failed' or not queue %}
+<button class="btn btn-primary" onclick="sendDoc({{ doc.pk }}, this)">→ Отправить в 1С</button>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="detail-grid">
+
+  <!-- Левая колонка: основная информация + XML -->
+  <div style="display:flex;flex-direction:column;gap:16px;">
+
+    <!-- Метаданные -->
+    <div class="card">
+      <div class="card-title">Информация о документе</div>
+      <table class="meta-table" style="width:100%">
+        <tr><td>Тип</td><td><span class="badge badge-{{ doc.doc_type }}">{{ doc.get_doc_type_display }}</span></td></tr>
+        <tr><td>Номер</td><td class="td-mono">{{ doc.number|default:"—" }}</td></tr>
+        <tr><td>Дата документа</td><td class="td-mono">{{ doc.doc_date|default:"—" }}</td></tr>
+        <tr><td>Получен</td><td class="td-mono">{{ doc.received_at|date:"d.m.Y H:i:s" }}</td></tr>
+        <tr><td>Поставщик (GLN)</td><td class="td-mono">{{ doc.supplier_name }} <span style="color:var(--text3)">[{{ doc.supplier_gln }}]</span></td></tr>
+        <tr><td>Покупатель (GLN)</td><td class="td-mono">{{ doc.buyer_name }} <span style="color:var(--text3)">[{{ doc.buyer_gln }}]</span></td></tr>
+        <tr><td>Docrobot ID</td><td class="td-mono" style="font-size:10px;">{{ doc.docrobot_id }}</td></tr>
+      </table>
+    </div>
+
+    <!-- XML-просмотр -->
+    <div class="card">
+      <div class="flex-between mb16">
+        <div class="card-title" style="margin:0">Сгенерированный XML</div>
+        <button class="btn btn-secondary btn-sm" onclick="copyXml()">📋 Копировать</button>
+      </div>
+      {% if doc.xml_content %}
+      <div class="code-block" id="xml-content">{{ doc.xml_content }}</div>
+      {% else %}
+      <div class="empty"><div class="empty-icon">📄</div><p>XML не сгенерирован</p></div>
+      {% endif %}
+    </div>
+
+    <!-- Сырые данные из Docrobot -->
+    <div class="card">
+      <div class="card-title">Сырые данные Docrobot (JSON)</div>
+      <div class="code-block" style="color:#86efac;">{{ doc.raw_json|json_dumps }}</div>
+    </div>
+
+  </div>
+
+  <!-- Правая колонка: очередь + логи -->
+  <div style="display:flex;flex-direction:column;gap:16px;">
+
+    <!-- Статус очереди -->
+    <div class="card">
+      <div class="card-title">Статус отправки в 1С</div>
+      {% if queue %}
+      <div style="margin-bottom:12px;">
+        <span class="badge badge-{{ queue.status }}" style="font-size:13px;padding:4px 12px;">{{ queue.get_status_display }}</span>
+      </div>
+      <table class="meta-table" style="width:100%">
+        <tr><td>Попыток</td><td class="td-mono">{{ queue.attempts }}</td></tr>
+        <tr><td>Создан</td><td class="td-mono">{{ queue.created_at|date:"d.m.Y H:i" }}</td></tr>
+        <tr><td>Обновлён</td><td class="td-mono">{{ queue.updated_at|date:"d.m.Y H:i" }}</td></tr>
+        {% if queue.sent_at %}
+        <tr><td>Отправлен</td><td class="td-mono" style="color:var(--accent2)">{{ queue.sent_at|date:"d.m.Y H:i" }}</td></tr>
+        {% endif %}
+        {% if queue.http_status %}
+        <tr><td>HTTP-код</td><td class="td-mono">{{ queue.http_status }}</td></tr>
+        {% endif %}
+        {% if queue.next_retry %}
+        <tr><td>Следующая попытка</td><td class="td-mono" style="color:var(--warn)">{{ queue.next_retry|date:"d.m H:i" }}</td></tr>
+        {% endif %}
+      </table>
+      {% if queue.last_error %}
+      <div style="margin-top:12px;padding:10px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:6px;font-size:12px;color:var(--danger);font-family:var(--mono);">
+        {{ queue.last_error }}
+      </div>
+      {% endif %}
+      {% if queue.response %}
+      <div style="margin-top:10px;">
+        <div style="font-size:11px;color:var(--text3);margin-bottom:4px;">Ответ 1С:</div>
+        <div class="code-block" style="max-height:120px;">{{ queue.response }}</div>
+      </div>
+      {% endif %}
+      {% else %}
+      <div style="color:var(--text3);font-size:13px;">Документ не добавлен в очередь</div>
+      {% endif %}
+    </div>
+
+    <!-- Логи документа -->
+    <div class="card">
+      <div class="card-title">История событий</div>
+      {% if logs %}
+      {% for log in logs %}
+      <div style="padding:8px 0;border-bottom:1px solid var(--border);">
+        <div class="flex-between">
+          <span class="badge badge-{% if log.level == 'error' %}error-lvl{% elif log.level == 'warn' %}warn{% else %}info{% endif %}" style="font-size:10px;">{{ log.action }}</span>
+          <span class="td-mono" style="font-size:10px;">{{ log.created_at|date:"d.m H:i:s" }}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text2);margin-top:4px;">{{ log.message }}</div>
+      </div>
+      {% endfor %}
+      {% else %}
+      <div style="color:var(--text3);font-size:13px;">Событий нет</div>
+      {% endif %}
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function copyXml() {
+  const text = document.getElementById('xml-content').textContent;
+  navigator.clipboard.writeText(text).then(() => toast('XML скопирован', 'success'));
+}
+
+async function sendDoc(id, btn) {
+  btn.disabled = true;
+  btn.textContent = '...';
+  try {
+    const r = await fetch(`/api/send/${id}/`, {
+      method: 'POST',
+      headers: { 'X-CSRFToken': getCookie('csrftoken') },
+    });
+    const d = await r.json();
+    if (d.success) {
+      toast('Отправлено успешно', 'success');
+      setTimeout(() => location.reload(), 1000);
+    } else {
+      toast(`Ошибка: ${d.error}`, 'error');
+      btn.disabled = false;
+      btn.textContent = '→ Отправить в 1С';
+    }
+  } catch(e) { toast('Сетевая ошибка', 'error'); btn.disabled = false; }
+}
+</script>
+
+<!-- Фильтр для JSON -->
+{% load edi_tags %}
+{% endblock %}

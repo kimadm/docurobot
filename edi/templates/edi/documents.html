@@ -1,0 +1,66 @@
+{% extends 'edi/base.html' %}
+{% block title %}Документы — Docrobot EDI{% endblock %}
+{% block page_title %}EDI-документы{% endblock %}
+{% block page_sub %}Все входящие документы из Docrobot{% endblock %}
+
+{% block content %}
+<div class="table-wrap">
+  <div class="table-toolbar">
+    <form method="get" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;width:100%">
+      <input type="search" name="q" value="{{ filters.q }}" placeholder="Поиск по номеру, поставщику..." style="width:220px" />
+      <select name="type">
+        <option value="">Все типы</option>
+        {% for val, label in doc_types %}
+        <option value="{{ val }}" {% if filters.type == val %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <input type="date" name="date_from" value="{{ filters.date_from }}" title="Дата с" />
+      <input type="date" name="date_to" value="{{ filters.date_to }}" title="Дата по" />
+      <button type="submit" class="btn btn-primary btn-sm">Применить</button>
+      <a href="{% url 'documents' %}" class="btn btn-secondary btn-sm">Сброс</a>
+      <div style="flex:1"></div>
+      <a href="{% url 'reports_export' %}" class="btn btn-secondary btn-sm">⬇ CSV</a>
+    </form>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Тип</th><th>Номер</th><th>Дата</th><th>Поставщик</th><th>Покупатель</th>
+        <th>Статус 1С</th><th>Попыток</th><th>Получен</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for doc in documents %}
+      <tr>
+        <td><span class="badge badge-{{ doc.doc_type }}">{{ doc.get_doc_type_display }}</span></td>
+        <td class="td-mono">{{ doc.number|default:"—" }}</td>
+        <td class="td-mono">{{ doc.doc_date|default:"—" }}</td>
+        <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ doc.supplier_name }}">{{ doc.supplier_name|default:"—" }}</td>
+        <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ doc.buyer_name }}">{{ doc.buyer_name|default:"—" }}</td>
+        <td>
+          {% with q=doc.queue_entry %}
+          {% if q %}<span class="badge badge-{{ q.status }}">{{ q.get_status_display }}</span>{% else %}—{% endif %}
+          {% endwith %}
+        </td>
+        <td class="td-mono">
+          {% with q=doc.queue_entry %}{% if q %}{{ q.attempts }}{% else %}—{% endif %}{% endwith %}
+        </td>
+        <td class="td-mono">{{ doc.received_at|date:"d.m.Y H:i" }}</td>
+        <td>
+          <div style="display:flex;gap:6px;">
+            <a href="{% url 'document_detail' doc.pk %}" class="btn btn-secondary btn-sm">Детали</a>
+            {% with q=doc.queue_entry %}
+            {% if q and q.status != 'sent' %}
+            <button class="btn btn-warn btn-sm" onclick="retryQueue({{ q.id }}, this)">↺</button>
+            {% endif %}
+            {% endwith %}
+          </div>
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="9"><div class="empty"><div class="empty-icon">📭</div><p>Документов не найдено</p></div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

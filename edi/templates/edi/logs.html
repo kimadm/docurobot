@@ -1,0 +1,46 @@
+{% extends 'edi/base.html' %}
+{% block title %}Логи — Docrobot EDI{% endblock %}
+{% block page_title %}Логи активности{% endblock %}
+{% block page_sub %}Все события системы{% endblock %}
+
+{% block content %}
+<div class="table-wrap">
+  <div class="table-toolbar">
+    <form method="get" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <select name="level" onchange="this.form.submit()">
+        <option value="">Все уровни</option>
+        {% for val, label in levels %}
+        <option value="{{ val }}" {% if filter_level == val %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <input type="text" name="action" value="{{ filter_action }}" placeholder="Фильтр по действию..." style="width:200px" />
+      <button type="submit" class="btn btn-primary btn-sm">Найти</button>
+      <a href="{% url 'logs' %}" class="btn btn-secondary btn-sm">Сброс</a>
+    </form>
+  </div>
+  <table>
+    <thead>
+      <tr><th>Время</th><th>Уровень</th><th>Действие</th><th>Сообщение</th><th>Документ</th></tr>
+    </thead>
+    <tbody>
+      {% for log in logs %}
+      <tr>
+        <td class="td-mono" style="white-space:nowrap;">{{ log.created_at|date:"d.m.Y H:i:s" }}</td>
+        <td><span class="badge badge-{% if log.level == 'error' %}error-lvl{% elif log.level == 'warn' %}warn{% else %}info{% endif %}">{{ log.get_level_display }}</span></td>
+        <td class="td-mono">{{ log.action }}</td>
+        <td style="font-size:12px;color:var(--text2);max-width:300px;">{{ log.message|truncatechars:100 }}</td>
+        <td>
+          {% if log.document %}
+          <a href="{% url 'document_detail' log.document.pk %}" style="font-family:var(--mono);font-size:11px;color:var(--accent);">
+            {{ log.document.number|default:log.document.docrobot_id|truncatechars:16 }}
+          </a>
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="5"><div class="empty"><div class="empty-icon">📋</div><p>Логов нет</p></div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

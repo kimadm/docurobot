@@ -1,14 +1,3 @@
-"""
-edi/management/commands/poll_docrobot.py
-
-Запуск: python manage.py poll_docrobot
-
-Каждые DOCROBOT_POLL_INTERVAL секунд:
-  1. Получает входящие документы из Docrobot (все типы за 7 дней)
-  2. Сохраняет новые в БД
-  3. Добавляет в очередь отправки в 1С
-  4. Обрабатывает ожидающие записи очереди
-"""
 import time
 import logging
 from django.core.management.base import BaseCommand
@@ -16,7 +5,6 @@ from django.conf import settings
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
-
 
 class Command(BaseCommand):
     help = 'Поллинг Docrobot API и отправка документов в 1С'
@@ -55,18 +43,18 @@ class Command(BaseCommand):
         try:
             documents = client.get_incoming_documents()
         except Exception as e:
-            logger.error(f'Ошибка получения документов: {e}')
-            ActivityLog.objects.create(
-                level='error', action='docrobot_poll',
-                message=f'Не удалось получить документы: {e}',
-            )
+            self.stdout.write(self.style.ERROR(f'Ошибка Docrobot: {e}'))
             return
 
         new_count = 0
         for normalized in documents:
             try:
                 doc_id = normalized.get('docrobotId', '')
-                if not doc_id or EdiDocument.objects.filter(docrobot_id=doc_id).exists():
+                if not doc_id:
+                    continue
+
+                # Пропускаем, если уже в базе
+                if EdiDocument.objects.filter(docrobot_id=doc_id).exists():
                     continue
 
                 doc = EdiDocument.objects.create(
@@ -78,44 +66,50 @@ class Command(BaseCommand):
                     buyer_gln     = normalized.get('buyerGln', ''),
                     supplier_name = normalized.get('supplierName', ''),
                     buyer_name    = normalized.get('buyerName', ''),
-                    raw_json      = normalized.get('raw', normalized),
+                    raw_json = normalized,  # Сохраняем уже обработанный нами JSON с позициями
                 )
                 SendQueue.objects.create(document=doc)
                 new_count += 1
-                logger.info(f'Новый документ: {doc}')
+                self.stdout.write(self.style.SUCCESS(f'  [+] Новый документ: {doc.doc_type} №{doc.number}'))
+                
             except Exception as e:
-                logger.error(f'Ошибка сохранения документа: {e}')
+                self.stdout.write(self.style.ERROR(f'  [!] Ошибка сохранения {normalized.get("docrobotId")}: {e}'))
 
-        if new_count:
+        if new_count > 0:
             ActivityLog.objects.create(
                 level='info', action='docrobot_poll',
                 message=f'Получено новых документов: {new_count}',
             )
+            self.stdout.write(self.style.SUCCESS(f'ИТОГО: Добавлено {new_count} новых записей.'))
         else:
-            ActivityLog.objects.create(
-                level='info', action='docrobot_poll',
-                message='Новых документов нет',
-            )
+            self.stdout.write(self.style.WARNING('Новых документов для загрузки нет.'))
 
     def _process_queue(self):
         from edi.models import SendQueue
         from edi.services import process_document
 
-        # Pending без next_retry
-        pending = list(SendQueue.objects.filter(
-            status=SendQueue.STATUS_PENDING, next_retry__isnull=True,
-        ).select_related('document')[:20])
+        # Очередь на отправку
+        queue = SendQueue.objects.filter(
+            status__in=[SendQueue.STATUS_PENDING, SendQueue.STATUS_ERROR]
+        ).filter(
+            next_retry__lte=timezone.now() if timezone.now() else True # Упрощенно для фильтра
+        ).select_related('document')[:20]
 
-        # Error с истёкшим next_retry
-        retry = list(SendQueue.objects.filter(
-            status=SendQueue.STATUS_ERROR,
-            next_retry__lte=timezone.now(),
-        ).select_related('document')[:20])
+        if not queue.exists():
+            return
 
-        for entry in pending + retry:
+        self.stdout.write(f'Обработка очереди отправки в 1С ({queue.count()} записей)...')
+
+        for entry in queue:
             try:
                 entry.status = SendQueue.STATUS_SENDING
                 entry.save(update_fields=['status'])
-                process_document(entry)
+                
+                success = process_document(entry)
+                
+                if success:
+                    self.stdout.write(self.style.SUCCESS(f'  [>>] {entry.document.number} отправлен в 1С'))
+                else:
+                    self.stdout.write(self.style.ERROR(f'  [XX] {entry.document.number} — ошибка 1С'))
             except Exception as e:
-                logger.error(f'Ошибка обработки очереди {entry.id}: {e}')
+                self.stdout.write(self.style.ERROR(f'  [!] Ошибка очереди {entry.id}: {e}'))

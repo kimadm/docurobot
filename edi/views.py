@@ -431,3 +431,146 @@ def api_test_send(request):
         return Response({'http_status': code, 'response': resp, 'success': 200 <= code < 300})
     except Exception as e:
         return Response({'error': str(e), 'success': False}, status=500)
+
+
+# ─── Страница подключений ─────────────────────────────────
+
+def connections_view(request):
+    """Страница настройки подключений к Docrobot и 1С."""
+    from .models import ConnectionSettings
+    cfg = ConnectionSettings.get()
+
+    if request.method == 'POST':
+        cfg.docrobot_url           = request.POST.get('docrobot_url', cfg.docrobot_url).strip()
+        cfg.docrobot_username      = request.POST.get('docrobot_username', '').strip()
+        new_dr_pass                = request.POST.get('docrobot_password', '').strip()
+        if new_dr_pass:
+            cfg.docrobot_password  = new_dr_pass
+        cfg.docrobot_poll_interval = int(request.POST.get('docrobot_poll_interval', 60))
+
+        cfg.onec_url      = request.POST.get('onec_url', cfg.onec_url).strip()
+        cfg.onec_username = request.POST.get('onec_username', '').strip()
+        new_1c_pass       = request.POST.get('onec_password', '').strip()
+        if new_1c_pass:
+            cfg.onec_password = new_1c_pass
+        cfg.onec_timeout  = int(request.POST.get('onec_timeout', 30))
+
+        cfg.telegram_token   = request.POST.get('telegram_token', '').strip()
+        cfg.telegram_chat_id = request.POST.get('telegram_chat_id', '').strip()
+
+        cfg.save()
+        cfg.apply_to_django_settings()
+
+        ActivityLog.objects.create(
+            level='info', action='settings_saved',
+            message='Настройки подключений обновлены',
+        )
+        return redirect('connections')
+
+    return render(request, 'edi/connections.html', {'cfg': cfg})
+
+
+@api_view(['POST'])
+def api_test_docrobot(request):
+    """Тест авторизации в Docrobot — использует данные из запроса или из БД."""
+    from .models import ConnectionSettings
+    import requests as req
+
+    url      = request.data.get('url', '').strip()
+    username = request.data.get('username', '').strip()
+    password = request.data.get('password', '').strip()
+
+    # Если пароль не передан — берём из БД
+    if not password:
+        cfg = ConnectionSettings.get()
+        password = cfg.docrobot_password
+
+    if not url or not username:
+        return Response({'success': False, 'error': 'URL и логин обязательны'}, status=400)
+
+    try:
+        resp = req.post(
+            f'{url.rstrip("/")}/api/v1/auth',
+            json={'login': username, 'password': password},
+            headers={'Content-type': 'application/json'},
+            timeout=15,
+        )
+        data = resp.json() if resp.content else {}
+
+        if resp.status_code == 200:
+            token = data.get('token') or data.get('access_token') or data.get('accessToken', '')
+            # Сохраняем статус
+            from .models import ConnectionSettings
+            from django.utils import timezone
+            cfg = ConnectionSettings.get()
+            cfg.docrobot_status    = 'ok'
+            cfg.docrobot_tested_at = timezone.now()
+            cfg.save(update_fields=['docrobot_status', 'docrobot_tested_at'])
+
+            ActivityLog.objects.create(level='info', action='docrobot_auth_ok',
+                message=f'Авторизация Docrobot успешна: {username}@{url}')
+            return Response({'success': True, 'token_preview': token[:20] + '...' if token else '(пусто)', 'http_status': 200})
+        else:
+            cfg = ConnectionSettings.get()
+            cfg.docrobot_status = 'error'
+            cfg.save(update_fields=['docrobot_status'])
+            ActivityLog.objects.create(level='error', action='docrobot_auth_fail',
+                message=f'Ошибка авторизации Docrobot HTTP {resp.status_code}: {resp.text[:200]}')
+            return Response({'success': False, 'error': f'HTTP {resp.status_code}: {resp.text[:300]}', 'http_status': resp.status_code})
+
+    except Exception as e:
+        return Response({'success': False, 'error': str(e)}, status=500)
+
+
+@api_view(['POST'])
+def api_test_onec(request):
+    """Тест подключения к 1С HTTP-сервису."""
+    import requests as req
+
+    url      = request.data.get('url', '').strip()
+    username = request.data.get('username', '').strip()
+    password = request.data.get('password', '').strip()
+
+    if not password:
+        from .models import ConnectionSettings
+        cfg = ConnectionSettings.get()
+        password = cfg.onec_password
+
+    if not url:
+        return Response({'success': False, 'error': 'URL обязателен'}, status=400)
+
+    try:
+        auth = (username, password) if username else None
+        resp = req.get(
+            url,
+            auth=auth,
+            headers={'Accept': 'application/xml, text/xml, */*'},
+            timeout=10,
+        )
+        from .models import ConnectionSettings
+        from django.utils import timezone
+        cfg = ConnectionSettings.get()
+
+        # 1С может ответить 200, 400, 405 — всё это значит "доступен"
+        reachable = resp.status_code < 500
+        cfg.onec_status    = 'ok' if reachable else 'error'
+        cfg.onec_tested_at = timezone.now()
+        cfg.save(update_fields=['onec_status', 'onec_tested_at'])
+
+        ActivityLog.objects.create(
+            level='info' if reachable else 'error',
+            action='onec_test',
+            message=f'Тест 1С {url}: HTTP {resp.status_code}',
+        )
+        return Response({
+            'success':     reachable,
+            'http_status': resp.status_code,
+            'response':    resp.text[:300],
+            'note':        'Статус < 500 означает что сервер доступен' if reachable else 'Сервер недоступен',
+        })
+    except req.exceptions.ConnectionError:
+        return Response({'success': False, 'error': 'Не удалось подключиться — проверьте URL и что 1С запущен'}, status=200)
+    except req.exceptions.Timeout:
+        return Response({'success': False, 'error': 'Таймаут — 1С не отвечает за 10 секунд'}, status=200)
+    except Exception as e:
+        return Response({'success': False, 'error': str(e)}, status=500)

@@ -257,6 +257,9 @@
       </div>
       <div class="nav-section">
         <div class="nav-label">Система</div>
+        <a href="{% url 'connections' %}" class="nav-item {% if request.resolver_match.url_name == 'connections' %}active{% endif %}">
+          <span class="nav-icon">🔌</span> Подключения
+        </a>
         <a href="{% url 'settings' %}" class="nav-item {% if 'settings' in request.resolver_match.url_name %}active{% endif %}">
           <span class="nav-icon">🔧</span> Шаблоны XML
         </a>

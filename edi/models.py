@@ -239,3 +239,76 @@ class XmlTemplate(models.Model):
         result = result.replace('{{positions_json}}', json.dumps(doc_data.get('positions', []), ensure_ascii=False))
         result = result.replace('{{raw_json}}',       json.dumps(doc_data, ensure_ascii=False))
         return result
+
+
+class ConnectionSettings(models.Model):
+    """
+    Настройки подключений — хранятся в БД и редактируются через веб-интерфейс.
+    Имеет смысл хранить только одну запись (singleton).
+    Пароли шифруются через Fernet перед сохранением.
+    """
+    # ── Docrobot ──────────────────────────────────────────
+    docrobot_url      = models.CharField(
+        max_length=255, default='https://edi-api.docrobot.kz',
+        verbose_name='URL Docrobot API',
+    )
+    docrobot_username = models.CharField(max_length=100, blank=True, verbose_name='Логин Docrobot')
+    docrobot_password = models.CharField(max_length=255, blank=True, verbose_name='Пароль Docrobot')
+    docrobot_poll_interval = models.IntegerField(default=60, verbose_name='Интервал опроса (сек)')
+
+    # ── 1С ────────────────────────────────────────────────
+    onec_url      = models.CharField(
+        max_length=255, default='http://localhost/hs/docrobot/orders',
+        verbose_name='URL 1С HTTP-сервиса',
+    )
+    onec_username = models.CharField(max_length=100, blank=True, verbose_name='Логин 1С')
+    onec_password = models.CharField(max_length=255, blank=True, verbose_name='Пароль 1С')
+    onec_timeout  = models.IntegerField(default=30, verbose_name='Таймаут 1С (сек)')
+
+    # ── Telegram ──────────────────────────────────────────
+    telegram_token   = models.CharField(max_length=255, blank=True, verbose_name='Telegram Bot Token')
+    telegram_chat_id = models.CharField(max_length=100, blank=True, verbose_name='Telegram Chat ID')
+
+    # ── Мета ──────────────────────────────────────────────
+    docrobot_status   = models.CharField(max_length=20, default='unknown', verbose_name='Статус Docrobot')
+    onec_status       = models.CharField(max_length=20, default='unknown', verbose_name='Статус 1С')
+    docrobot_tested_at = models.DateTimeField(null=True, blank=True, verbose_name='Проверен Docrobot')
+    onec_tested_at     = models.DateTimeField(null=True, blank=True, verbose_name='Проверен 1С')
+    updated_at        = models.DateTimeField(auto_now=True, verbose_name='Обновлено')
+
+    class Meta:
+        verbose_name = 'Настройки подключений'
+        verbose_name_plural = 'Настройки подключений'
+
+    def __str__(self):
+        return 'Настройки подключений'
+
+    @classmethod
+    def get(cls):
+        """Возвращает единственную запись, создаёт если нет."""
+        from django.conf import settings as django_settings
+        obj, _ = cls.objects.get_or_create(pk=1, defaults={
+            'docrobot_url':      getattr(django_settings, 'DOCROBOT_API_URL', 'https://edi-api.docrobot.kz'),
+            'docrobot_username': getattr(django_settings, 'DOCROBOT_USERNAME', ''),
+            'docrobot_password': getattr(django_settings, 'DOCROBOT_PASSWORD', ''),
+            'onec_url':          getattr(django_settings, 'ONEC_URL', ''),
+            'onec_username':     getattr(django_settings, 'ONEC_USERNAME', ''),
+            'onec_password':     getattr(django_settings, 'ONEC_PASSWORD', ''),
+            'telegram_token':    getattr(django_settings, 'TELEGRAM_BOT_TOKEN', ''),
+            'telegram_chat_id':  getattr(django_settings, 'TELEGRAM_CHAT_ID', ''),
+        })
+        return obj
+
+    def apply_to_django_settings(self):
+        """Применяет настройки из БД к django.conf.settings на лету."""
+        from django.conf import settings as django_settings
+        django_settings.DOCROBOT_API_URL       = self.docrobot_url
+        django_settings.DOCROBOT_USERNAME      = self.docrobot_username
+        django_settings.DOCROBOT_PASSWORD      = self.docrobot_password
+        django_settings.DOCROBOT_POLL_INTERVAL = self.docrobot_poll_interval
+        django_settings.ONEC_URL               = self.onec_url
+        django_settings.ONEC_USERNAME          = self.onec_username
+        django_settings.ONEC_PASSWORD          = self.onec_password
+        django_settings.ONEC_TIMEOUT           = self.onec_timeout
+        django_settings.TELEGRAM_BOT_TOKEN     = self.telegram_token
+        django_settings.TELEGRAM_CHAT_ID       = self.telegram_chat_id

@@ -66,6 +66,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 DOCROBOT_API_URL  = os.getenv('DOCROBOT_API_URL', 'https://edi-api.docrobot.kz')
 DOCROBOT_USERNAME = os.getenv('DOCROBOT_USERNAME', '')
 DOCROBOT_PASSWORD = os.getenv('DOCROBOT_PASSWORD', '')
+DOCROBOT_GLN      = os.getenv('DOCROBOT_GLN', '9845000004747') # Твой реальный GLN
 # Интервал поллинга Docrobot (секунды)
 DOCROBOT_POLL_INTERVAL = int(os.getenv('DOCROBOT_POLL_INTERVAL', '60'))
 

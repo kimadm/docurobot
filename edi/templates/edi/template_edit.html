@@ -69,7 +69,7 @@
         <div class="card-title">Вставить переменную</div>
         <div style="line-height:2;">
           {% for var in doc_vars %}
-          <span class="var-chip" onclick="insertVar('body_tpl', '{{{{ {var} }}}}')">{{ var }}</span>
+          <span class="var-chip" onclick="insertVar('body_tpl', makeVar('{{ var }}'))">{{ var }}</span>
           {% endfor %}
         </div>
         <div style="margin-top:8px;font-size:10px;color:var(--text3);">Клик — вставить в шаблон документа</div>
@@ -114,7 +114,7 @@
       </div>
       <div style="margin-bottom:8px;">
         {% for var in pos_vars %}
-        <span class="var-chip" onclick="insertVar('position_tpl', '{{{{ {var} }}}}')">{{ var }}</span>
+        <span class="var-chip" onclick="insertVar('position_tpl', makeVar('{{ var }}'))">{{ var }}</span>
         {% endfor %}
       </div>
       <textarea class="editor-area" name="position_tpl" id="position_tpl" rows="16">{{ tpl.position_tpl }}</textarea>
@@ -128,6 +128,11 @@
 <script>
 const CSRF = '{{ csrf_token }}';
 const DOC_TYPE = '{{ tpl.doc_type }}';
+</script>
+<script>
+function makeVar(name) {
+  return '{' + '{' + ' ' + name + ' ' + '}' + '}';
+}
 
 function insertVar(fieldId, text) {
   const el = document.getElementById(fieldId);

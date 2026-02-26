@@ -15,6 +15,11 @@ urlpatterns = [
     # Подключения
     path('connections/',             views.connections_view,   name='connections'),
     # API
+    # Печатные формы
+    path('print/',                       views.print_forms,    name='print_forms'),
+    path('print/single/<int:pk>/<str:fmt>/', views.print_single, name='print_single'),
+    path('print/selected/',              views.print_selected, name='print_selected'),
+    # API
     path('api/retry/<int:pk>/',    views.api_retry,          name='api_retry'),
     path('api/send/<int:pk>/',     views.api_send_document,  name='api_send'),
     path('api/webhook/',           views.api_webhook,        name='api_webhook'),
@@ -22,4 +27,14 @@ urlpatterns = [
     path('api/test-send/',         views.api_test_send,      name='api_test_send'),
     path('api/test-docrobot/',     views.api_test_docrobot,  name='api_test_docrobot'),
     path('api/test-onec/',         views.api_test_onec,      name='api_test_onec'),
+    path('api/search/',            views.api_search,         name='api_search'),
+    path('api/poll-now/',          views.api_poll_now,       name='api_poll_now'),
+    path('health/',                views.healthcheck,        name='healthcheck'),
+    path('api/dashboard/stats/',   views.api_dashboard_stats,name='api_dashboard_stats'),
+    path('backup/',                views.backup_db,          name='backup_db'),
+    path('api/cleanup/',           views.api_cleanup_now,    name='api_cleanup'),
+    path('suppliers/',             views.suppliers,          name='suppliers'),
+    path('api/comments/<int:pk>/add/',          views.api_comment_add,    name='api_comment_add'),
+    path('api/comments/<int:comment_id>/delete/', views.api_comment_delete, name='api_comment_delete'),
+    path('log-files/',             views.log_files,          name='log_files'),
 ]

@@ -1,0 +1,236 @@
+{% extends 'edi/base.html' %}
+{% block title %}Поставщики — Docrobot EDI{% endblock %}
+{% block page_title %}Статистика по поставщикам{% endblock %}
+{% block page_sub %}Аналитика активности GLN-партнёров{% endblock %}
+
+{% block topbar_actions %}
+<div style="display:flex;gap:6px;align-items:center">
+  <span style="font-size:12px;color:var(--muted)">Период:</span>
+  {% for d in periods %}
+  <a href="?days={{ d }}"
+     class="btn btn-secondary btn-sm"
+     style="{% if days == d %}background:var(--accent);color:#fff;border-color:var(--accent){% endif %}">
+    {{ d }}д
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}
+
+{% block content %}
+<style>
+  .sup-stats { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:24px; }
+  .sup-stat  { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:18px 20px; }
+  .sup-stat-val { font-size:28px; font-weight:700; color:var(--accent); margin-bottom:4px; }
+  .sup-stat-lbl { font-size:12px; color:var(--muted); }
+
+  .sup-table-wrap { background:var(--surface); border:1px solid var(--border); border-radius:12px; overflow:hidden; margin-bottom:24px; }
+  .sup-table-head { padding:14px 20px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+  .sup-table-head h3 { font-size:14px; font-weight:600; margin:0; }
+
+  table.sup-tbl { width:100%; border-collapse:collapse; font-size:12px; }
+  table.sup-tbl th { padding:9px 14px; text-align:left; font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; background:var(--surface2); border-bottom:1px solid var(--border); }
+  table.sup-tbl td { padding:10px 14px; border-bottom:1px solid var(--border); vertical-align:middle; }
+  table.sup-tbl tr:last-child td { border-bottom:none; }
+  table.sup-tbl tr:hover td { background:var(--surface2); }
+
+  .rank-badge { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:50%; font-size:11px; font-weight:700; }
+  .rank-1 { background:#FFD700; color:#92400E; }
+  .rank-2 { background:#C0C0C0; color:#374151; }
+  .rank-3 { background:#CD7F32; color:#fff; }
+  .rank-n { background:var(--surface2); color:var(--muted); }
+
+  .bar-wrap { display:flex; align-items:center; gap:8px; }
+  .bar-bg   { flex:1; height:8px; background:var(--surface2); border-radius:4px; overflow:hidden; max-width:120px; }
+  .bar-fill { height:100%; border-radius:4px; background:var(--accent); transition:width .3s; }
+
+  .type-pill { display:inline-block; padding:2px 7px; border-radius:4px; font-size:10px; font-weight:700; margin:1px; }
+  .tp-ORDER   { background:#EFF6FF; color:#1D4ED8; }
+  .tp-INVOICE { background:#FDF4FF; color:#9333EA; }
+  .tp-DESADV  { background:#FFF7ED; color:#C2410C; }
+
+  /* ── График ── */
+  .chart-wrap { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:20px; }
+  .chart-wrap h3 { font-size:14px; font-weight:600; margin:0 0 16px; }
+  #sup-chart { width:100%; height:200px; }
+  .chart-legend { display:flex; gap:14px; flex-wrap:wrap; margin-top:10px; }
+  .legend-item { display:flex; align-items:center; gap:5px; font-size:11px; color:var(--muted); }
+  .legend-dot  { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+</style>
+
+<!-- Сводная статистика -->
+<div class="sup-stats">
+  <div class="sup-stat">
+    <div class="sup-stat-val">{{ unique_suppliers }}</div>
+    <div class="sup-stat-lbl">Уникальных поставщиков за {{ days }} дней</div>
+  </div>
+  <div class="sup-stat">
+    <div class="sup-stat-val">{{ total_docs }}</div>
+    <div class="sup-stat-lbl">Всего документов за период</div>
+  </div>
+  <div class="sup-stat">
+    <div class="sup-stat-val">{{ avg_per_supplier }}</div>
+    <div class="sup-stat-lbl">Документов на поставщика в среднем</div>
+  </div>
+</div>
+
+<!-- Таблица поставщиков -->
+<div class="sup-table-wrap">
+  <div class="sup-table-head">
+    <h3>📊 Топ поставщиков по активности</h3>
+    <span style="font-size:12px;color:var(--muted)">за {{ days }} дней</span>
+  </div>
+  <table class="sup-tbl">
+    <thead>
+      <tr>
+        <th style="width:44px">#</th>
+        <th>GLN</th>
+        <th>Название</th>
+        <th style="text-align:right">Всего</th>
+        <th>Типы документов</th>
+        <th>Активность</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if top_by_count %}
+      {% with max_total=top_by_count.0.total %}
+      {% for sup in top_by_count %}
+      <tr>
+        <td>
+          <span class="rank-badge {% if forloop.counter == 1 %}rank-1{% elif forloop.counter == 2 %}rank-2{% elif forloop.counter == 3 %}rank-3{% else %}rank-n{% endif %}">
+            {{ forloop.counter }}
+          </span>
+        </td>
+        <td>
+          <a href="{% url 'documents' %}?type=ORDER&q={{ sup.supplier_gln }}"
+             style="font-family:monospace;font-size:11px;color:var(--accent);text-decoration:none">
+            {{ sup.supplier_gln }}
+          </a>
+        </td>
+        <td style="font-weight:500">{{ sup.supplier_name|default:"—" }}</td>
+        <td style="text-align:right;font-weight:700;font-size:13px">{{ sup.total }}</td>
+        <td>
+          {% if sup.orders %}   <span class="type-pill tp-ORDER">ORDER×{{ sup.orders }}</span>{% endif %}
+          {% if sup.invoices %} <span class="type-pill tp-INVOICE">INVOICE×{{ sup.invoices }}</span>{% endif %}
+          {% if sup.desadv %}   <span class="type-pill tp-DESADV">DESADV×{{ sup.desadv }}</span>{% endif %}
+        </td>
+        <td>
+          <div class="bar-wrap">
+            <div class="bar-bg">
+              <div class="bar-fill" style="width:{% widthratio sup.total max_total 100 %}%"></div>
+            </div>
+            <span style="font-size:11px;color:var(--muted)">{% widthratio sup.total max_total 100 %}%</span>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+      {% endwith %}
+      {% else %}
+      <tr><td colspan="6">
+        <div style="text-align:center;padding:40px;color:var(--muted)">
+          <div style="font-size:36px;margin-bottom:10px">📭</div>
+          <p>Нет данных за выбранный период</p>
+        </div>
+      </td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+<!-- График динамики топ-5 -->
+{% if top_by_count %}
+<div class="chart-wrap">
+  <h3>📈 Динамика топ-5 поставщиков (документов в день)</h3>
+  <canvas id="sup-chart"></canvas>
+  <div class="chart-legend" id="chart-legend"></div>
+</div>
+{% endif %}
+
+<script>
+const rawData = {{ daily_json|safe }};
+const COLORS  = ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6'];
+
+(function drawChart() {
+  const canvas = document.getElementById('sup-chart');
+  if (!canvas || !Object.keys(rawData).length) return;
+
+  const ctx  = canvas.getContext('2d');
+  const W    = canvas.offsetWidth || 800;
+  const H    = 200;
+  canvas.width  = W;
+  canvas.height = H;
+
+  const suppliers = Object.keys(rawData);
+  if (!suppliers.length) return;
+
+  const days   = rawData[suppliers[0]];
+  const labels = days.map(d => d.day);
+  const nDays  = labels.length;
+
+  // Находим max
+  let maxVal = 1;
+  suppliers.forEach(s => rawData[s].forEach(p => { if (p.count > maxVal) maxVal = p.count; }));
+
+  const PAD  = { t:10, r:10, b:30, l:30 };
+  const cW   = W - PAD.l - PAD.r;
+  const cH   = H - PAD.t - PAD.b;
+
+  // Фон сетки
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--border') || '#1e2d45';
+  ctx.lineWidth   = 0.5;
+  [0, 0.25, 0.5, 0.75, 1].forEach(t => {
+    const y = PAD.t + cH * (1 - t);
+    ctx.beginPath(); ctx.moveTo(PAD.l, y); ctx.lineTo(PAD.l + cW, y); ctx.stroke();
+    if (t > 0) {
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--muted') || '#94a3b8';
+      ctx.font = '9px sans-serif';
+      ctx.fillText(Math.round(maxVal * t), 2, y + 3);
+    }
+  });
+
+  // Метки оси X (каждые 5 дней)
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--muted') || '#94a3b8';
+  ctx.font = '9px sans-serif';
+  ctx.textAlign = 'center';
+  labels.forEach((lbl, i) => {
+    if (i % Math.max(1, Math.floor(nDays / 7)) === 0) {
+      const x = PAD.l + (i / (nDays - 1 || 1)) * cW;
+      ctx.fillText(lbl, x, H - 4);
+    }
+  });
+
+  // Линии поставщиков
+  suppliers.forEach((name, si) => {
+    const color = COLORS[si % COLORS.length];
+    const pts   = rawData[name];
+    ctx.strokeStyle = color;
+    ctx.lineWidth   = 2;
+    ctx.beginPath();
+    pts.forEach((p, i) => {
+      const x = PAD.l + (i / (nDays - 1 || 1)) * cW;
+      const y = PAD.t + cH * (1 - p.count / maxVal);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // Точки
+    ctx.fillStyle = color;
+    pts.forEach((p, i) => {
+      if (p.count > 0) {
+        const x = PAD.l + (i / (nDays - 1 || 1)) * cW;
+        const y = PAD.t + cH * (1 - p.count / maxVal);
+        ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
+      }
+    });
+
+    // Легенда
+    const leg = document.getElementById('chart-legend');
+    if (leg) {
+      const item = document.createElement('div');
+      item.className = 'legend-item';
+      item.innerHTML = `<span class="legend-dot" style="background:${color}"></span>${name}`;
+      leg.appendChild(item);
+    }
+  });
+})();
+</script>
+{% endblock %}

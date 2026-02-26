@@ -59,6 +59,10 @@
       <label>Интервал опроса (секунды)</label>
       <input type="number" name="docrobot_poll_interval" value="{{ cfg.docrobot_poll_interval }}" min="10" max="3600" />
     </div>
+    <div class="field-row">
+      <label>GLN компании <span style="color:var(--muted);font-weight:400">(13 цифр, ваш идентификатор в Docrobot)</span></label>
+      <input type="text" name="docrobot_gln" value="{{ cfg.docrobot_gln }}" placeholder="9845000099712" maxlength="13" pattern="\d{13}" />
+    </div>
 
     <div id="dr-result"></div>
   </div>
@@ -117,6 +121,38 @@
     </div>
   </div>
   <div id="tg-result"></div>
+</div>
+
+<!-- ── Обслуживание БД ── -->
+<div class="card" style="margin-top:20px">
+  <div class="section-header">
+    <div><div class="section-title">🗄️ Обслуживание базы данных</div></div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+    <div>
+      <div class="field-row">
+        <label>Хранить документы (дней) <span style="color:var(--muted);font-weight:400">0 = не удалять</span></label>
+        <input type="number" name="cleanup_days" value="{{ cfg.cleanup_days }}" min="0" max="3650" />
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">
+        Документы и логи старше указанного срока будут удаляться автоматически при каждом цикле поллинга.
+      </div>
+      <button type="button" class="btn btn-secondary btn-sm" style="margin-top:12px" onclick="cleanupNow()">
+        🧹 Очистить сейчас
+      </button>
+    </div>
+    <div>
+      <div style="font-size:12px;font-weight:600;margin-bottom:8px">Резервная копия</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px">
+        Скачать текущую базу данных SQLite. Рекомендуется делать до обновлений системы.
+      </div>
+      <a href="{% url 'backup_db' %}" class="btn btn-secondary">
+        💾 Скачать backup БД
+      </a>
+    </div>
+  </div>
+  <div id="cleanup-result" style="margin-top:12px"></div>
 </div>
 
 <!-- ── Кнопки ── -->
@@ -206,5 +242,18 @@ async function testTelegram() {
     }
   } catch(e) { showResult('tg-result', '✗ ' + e.message, false); }
 }
+async function cleanupNow() {
+  const res = document.getElementById('cleanup-result');
+  res.innerHTML = '<span style="color:var(--muted)">⏳ Очистка запущена...</span>';
+  try {
+    const r = await fetch('/api/cleanup/', {method:'POST', headers:{'X-CSRFToken': getCookie('csrftoken')}});
+    const d = await r.json();
+    res.innerHTML = d.ok
+      ? '<span style="color:var(--accent2)">✅ Очистка запущена в фоне. Проверьте логи через минуту.</span>'
+      : '<span style="color:var(--danger)">❌ Ошибка запуска</span>';
+  } catch(e) { res.innerHTML = '<span style="color:var(--danger)">❌ Сетевая ошибка</span>'; }
+}
+
+function getCookie(n) { const m = document.cookie.match('(^|;)\\s*'+n+'\\s*=\\s*([^;]+)'); return m ? m.pop() : ''; }
 </script>
 {% endblock %}

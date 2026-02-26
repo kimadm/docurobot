@@ -1,0 +1,127 @@
+{% extends 'edi/base.html' %}
+{% block title %}Статус системы — Docrobot EDI{% endblock %}
+{% block page_title %}Статус системы{% endblock %}
+{% block page_sub %}Healthcheck всех компонентов · обновляется каждые 30 сек{% endblock %}
+
+{% block topbar_actions %}
+<button class="btn btn-secondary btn-sm" onclick="location.reload()">🔄 Обновить</button>
+<a href="?format=json" target="_blank" class="btn btn-secondary btn-sm">{ } JSON</a>
+{% endblock %}
+
+{% block content %}
+<style>
+  .hc-overall {
+    display: flex; align-items: center; gap: 14px;
+    padding: 18px 24px; border-radius: 12px; margin-bottom: 24px;
+    font-size: 16px; font-weight: 700;
+  }
+  .hc-overall.ok    { background: rgba(16,185,129,.1); border: 1px solid rgba(16,185,129,.3); color: #059669; }
+  .hc-overall.warn  { background: rgba(245,158,11,.1); border: 1px solid rgba(245,158,11,.3); color: #D97706; }
+  .hc-overall.error { background: rgba(239,68,68,.1);  border: 1px solid rgba(239,68,68,.3);  color: #DC2626; }
+  .hc-overall-icon  { font-size: 28px; }
+
+  .hc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; margin-bottom: 24px; }
+
+  .hc-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px 20px;
+    border-left: 4px solid transparent;
+    transition: transform .15s;
+  }
+  .hc-card:hover { transform: translateY(-1px); }
+  .hc-card.ok    { border-left-color: #10B981; }
+  .hc-card.warn  { border-left-color: #F59E0B; }
+  .hc-card.error { border-left-color: #EF4444; }
+
+  .hc-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .hc-card-name { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .hc-card-icon { font-size: 20px; }
+
+  .hc-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 700;
+  }
+  .hc-badge::before { content:''; display:inline-block; width:7px; height:7px; border-radius:50%; }
+  .hc-badge.ok    { background: rgba(16,185,129,.1); color:#059669; }
+  .hc-badge.ok::before { background:#10B981; box-shadow:0 0 6px #10B981; }
+  .hc-badge.warn  { background: rgba(245,158,11,.1); color:#D97706; }
+  .hc-badge.warn::before { background:#F59E0B; box-shadow:0 0 6px #F59E0B; }
+  .hc-badge.error { background: rgba(239,68,68,.1);  color:#DC2626; }
+  .hc-badge.error::before { background:#EF4444; box-shadow:0 0 6px #EF4444; animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  .hc-detail { font-size: 12px; color: var(--muted); font-family: monospace; line-height: 1.5; }
+
+  .sys-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px 24px;
+  }
+  .sys-card h3 { font-size: 13px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin: 0 0 14px; }
+  .sys-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+  .sys-item label { display: block; font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 3px; }
+  .sys-item span  { font-size: 13px; font-family: monospace; color: var(--text); }
+
+  .live-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: #10B981; box-shadow: 0 0 6px #10B981;
+    animation: pulse 2s infinite; margin-right: 6px;
+  }
+</style>
+
+{% if overall == 'ok' %}
+<div class="hc-overall ok">
+  <span class="hc-overall-icon">✅</span>
+  Все системы работают нормально
+  <span style="margin-left:auto;font-size:12px;font-weight:400;opacity:.7">{{ sys_info.time }}</span>
+</div>
+{% elif overall == 'warn' %}
+<div class="hc-overall warn">
+  <span class="hc-overall-icon">⚠️</span>
+  Есть предупреждения — проверьте детали
+  <span style="margin-left:auto;font-size:12px;font-weight:400;opacity:.7">{{ sys_info.time }}</span>
+</div>
+{% else %}
+<div class="hc-overall error">
+  <span class="hc-overall-icon">🚨</span>
+  Обнаружены ошибки — требуется внимание
+  <span style="margin-left:auto;font-size:12px;font-weight:400;opacity:.7">{{ sys_info.time }}</span>
+</div>
+{% endif %}
+
+<div class="hc-grid">
+  {% for check in checks %}
+  <div class="hc-card {{ check.status }}">
+    <div class="hc-card-head">
+      <div class="hc-card-name">
+        <span class="hc-card-icon">{{ check.icon }}</span>
+        {{ check.name }}
+      </div>
+      <span class="hc-badge {{ check.status }}">
+        {% if check.status == 'ok' %}OK{% elif check.status == 'warn' %}ВНИМАНИЕ{% else %}ОШИБКА{% endif %}
+      </span>
+    </div>
+    <div class="hc-detail">{{ check.detail }}</div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="sys-card">
+  <h3>ℹ️ Системная информация</h3>
+  <div class="sys-grid">
+    <div class="sys-item"><label>Python</label><span>{{ sys_info.python }}</span></div>
+    <div class="sys-item"><label>Django</label><span>{{ sys_info.django }}</span></div>
+    <div class="sys-item"><label>Платформа</label><span>{{ sys_info.platform }}</span></div>
+    <div class="sys-item"><label>База данных</label><span>{{ sys_info.db_path|truncatechars:40 }}</span></div>
+    <div class="sys-item"><label>Время сервера</label><span>{{ sys_info.time }}</span></div>
+    <div class="sys-item">
+      <label>Авто-обновление</label>
+      <span><span class="live-dot"></span>каждые 30 сек</span>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Авто-обновление страницы каждые 30 секунд
+  setTimeout(() => location.reload(), 30000);
+</script>
+{% endblock %}

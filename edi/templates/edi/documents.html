@@ -4,24 +4,77 @@
 {% block page_sub %}Все входящие документы из Docrobot{% endblock %}
 
 {% block content %}
+<style>
+  .search-wrap { position:relative; margin-bottom:14px; }
+  .search-icon { position:absolute; left:12px; top:50%; transform:translateY(-50%); font-size:14px; color:var(--muted); pointer-events:none; }
+  #searchInput { width:100%; padding:10px 40px 10px 36px; font-size:14px; background:var(--surface); border:1px solid var(--border); border-radius:10px; color:var(--text); outline:none; transition:border-color .2s; box-sizing:border-box; }
+  #searchInput:focus { border-color:var(--accent); }
+  .search-spinner { position:absolute; right:12px; top:50%; transform:translateY(-50%); display:none; width:16px; height:16px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin .6s linear infinite; }
+  @keyframes spin { to { transform:translateY(-50%) rotate(360deg); } }
+
+  .filters-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:14px; }
+  .filters-row select, .filters-row input[type=date] { padding:7px 10px; font-size:12px; background:var(--surface); border:1px solid var(--border); border-radius:8px; color:var(--text); outline:none; }
+  .filter-btn { padding:7px 14px; font-size:12px; font-weight:600; border:none; border-radius:8px; cursor:pointer; text-decoration:none; }
+  .filter-btn-apply { background:var(--accent); color:#fff; }
+  .filter-btn-reset { background:var(--surface2); color:var(--muted); }
+  .spacer { flex:1; }
+  .results-count { font-size:12px; color:var(--muted); }
+
+  .table-wrap { background:var(--surface); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  thead th { padding:10px 12px; text-align:left; font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; background:var(--surface2); border-bottom:1px solid var(--border); }
+  tbody td { padding:10px 12px; border-bottom:1px solid var(--border); vertical-align:middle; }
+  tbody tr:last-child td { border-bottom:none; }
+  tbody tr:hover td { background:var(--surface2); }
+
+  .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:700; }
+  .badge-ORDER { background:#EFF6FF; color:#1D4ED8; }
+  .badge-ORDRSP { background:#F0FDF4; color:#16A34A; }
+  .badge-DESADV { background:#FFF7ED; color:#C2410C; }
+  .badge-INVOICE { background:#FDF4FF; color:#9333EA; }
+  .badge-PRICAT { background:#F0FDFA; color:#0D9488; }
+  .badge-sent { background:#F0FDF4; color:#16A34A; }
+  .badge-pending { background:#FFF7ED; color:#D97706; }
+  .badge-error { background:#FEF2F2; color:#DC2626; }
+  .badge-failed { background:#FEF2F2; color:#991B1B; }
+  .badge-sending { background:#EFF6FF; color:#2563EB; }
+  .badge-none { background:var(--surface2); color:var(--muted); }
+
+  .td-mono { font-family:monospace; font-size:11px; color:var(--muted); }
+  .td-num { font-weight:600; }
+  .actions { display:flex; gap:4px; }
+  .btn-sm { padding:4px 10px; font-size:11px; font-weight:600; border-radius:6px; cursor:pointer; text-decoration:none; border:none; }
+  .btn-detail { background:var(--surface2); color:var(--text); }
+  .btn-retry { background:rgba(245,158,11,.12); color:#D97706; }
+  mark { background:rgba(250,204,21,.4); border-radius:2px; padding:0 1px; }
+  .empty { text-align:center; padding:48px; color:var(--muted); }
+  .empty-icon { font-size:40px; margin-bottom:10px; }
+</style>
+
+<div class="search-wrap">
+  <span class="search-icon">🔍</span>
+  <input type="text" id="searchInput" placeholder="Поиск по номеру, GLN, поставщику, покупателю..." value="{{ filters.q }}" autocomplete="off">
+  <div class="search-spinner" id="searchSpinner"></div>
+</div>
+
+<form method="get" id="filterForm" class="filters-row">
+  <select name="type" id="typeSelect">
+    <option value="">Все типы</option>
+    {% for val, label in doc_types %}
+    <option value="{{ val }}" {% if filters.type == val %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <input type="date" name="date_from" id="dateFrom" value="{{ filters.date_from }}" title="Дата с">
+  <input type="date" name="date_to" id="dateTo" value="{{ filters.date_to }}" title="Дата по">
+  <input type="hidden" name="q" id="hiddenQ" value="{{ filters.q }}">
+  <button type="submit" class="filter-btn filter-btn-apply">Применить</button>
+  <a href="{% url 'documents' %}" class="filter-btn filter-btn-reset">Сброс</a>
+  <div class="spacer"></div>
+  <span class="results-count">Показано: <strong id="countNum">{{ documents|length }}</strong></span>
+  <a href="{% url 'print_forms' %}?doc_type={{ filters.type }}&date_from={{ filters.date_from }}&date_to={{ filters.date_to }}" class="filter-btn filter-btn-reset">🖨️ Печать</a>
+</form>
+
 <div class="table-wrap">
-  <div class="table-toolbar">
-    <form method="get" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;width:100%">
-      <input type="search" name="q" value="{{ filters.q }}" placeholder="Поиск по номеру, поставщику..." style="width:220px" />
-      <select name="type">
-        <option value="">Все типы</option>
-        {% for val, label in doc_types %}
-        <option value="{{ val }}" {% if filters.type == val %}selected{% endif %}>{{ label }}</option>
-        {% endfor %}
-      </select>
-      <input type="date" name="date_from" value="{{ filters.date_from }}" title="Дата с" />
-      <input type="date" name="date_to" value="{{ filters.date_to }}" title="Дата по" />
-      <button type="submit" class="btn btn-primary btn-sm">Применить</button>
-      <a href="{% url 'documents' %}" class="btn btn-secondary btn-sm">Сброс</a>
-      <div style="flex:1"></div>
-      <a href="{% url 'reports_export' %}" class="btn btn-secondary btn-sm">⬇ CSV</a>
-    </form>
-  </div>
   <table>
     <thead>
       <tr>
@@ -29,33 +82,21 @@
         <th>Статус 1С</th><th>Попыток</th><th>Получен</th><th></th>
       </tr>
     </thead>
-    <tbody>
+    <tbody id="tableBody">
       {% for doc in documents %}
       <tr>
-        <td><span class="badge badge-{{ doc.doc_type }}">{{ doc.get_doc_type_display }}</span></td>
-        <td class="td-mono">{{ doc.number|default:"—" }}</td>
-        <td class="td-mono">{{ doc.doc_date|default:"—" }}</td>
-        <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ doc.supplier_name }}">{{ doc.supplier_name|default:"—" }}</td>
-        <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ doc.buyer_name }}">{{ doc.buyer_name|default:"—" }}</td>
-        <td>
-          {% with q=doc.queue_entry %}
-          {% if q %}<span class="badge badge-{{ q.status }}">{{ q.get_status_display }}</span>{% else %}—{% endif %}
-          {% endwith %}
-        </td>
-        <td class="td-mono">
-          {% with q=doc.queue_entry %}{% if q %}{{ q.attempts }}{% else %}—{% endif %}{% endwith %}
-        </td>
+        <td><span class="badge badge-{{ doc.doc_type }}">{{ doc.doc_type }}</span></td>
+        <td class="td-num">{{ doc.number|default:"—" }}</td>
+        <td class="td-mono">{{ doc.doc_date|date:"d.m.Y"|default:"—" }}</td>
+        <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ doc.supplier_name }}">{{ doc.supplier_name|default:doc.supplier_gln|default:"—" }}</td>
+        <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ doc.buyer_name }}">{{ doc.buyer_name|default:doc.buyer_gln|default:"—" }}</td>
+        <td>{% with q=doc.queue_entry %}{% if q %}<span class="badge badge-{{ q.status }}">{{ q.get_status_display }}</span>{% else %}<span class="badge badge-none">—</span>{% endif %}{% endwith %}</td>
+        <td class="td-mono" style="text-align:center">{% with q=doc.queue_entry %}{% if q %}{{ q.attempts }}{% else %}—{% endif %}{% endwith %}</td>
         <td class="td-mono">{{ doc.received_at|date:"d.m.Y H:i" }}</td>
-        <td>
-          <div style="display:flex;gap:6px;">
-            <a href="{% url 'document_detail' doc.pk %}" class="btn btn-secondary btn-sm">Детали</a>
-            {% with q=doc.queue_entry %}
-            {% if q and q.status != 'sent' %}
-            <button class="btn btn-warn btn-sm" onclick="retryQueue({{ q.id }}, this)">↺</button>
-            {% endif %}
-            {% endwith %}
-          </div>
-        </td>
+        <td><div class="actions">
+          <a href="{% url 'document_detail' doc.pk %}" class="btn-sm btn-detail">Детали</a>
+          {% with q=doc.queue_entry %}{% if q and q.status != 'sent' %}<button class="btn-sm btn-retry" onclick="retryQueue({{ q.id }}, this)">↺</button>{% endif %}{% endwith %}
+        </div></td>
       </tr>
       {% empty %}
       <tr><td colspan="9"><div class="empty"><div class="empty-icon">📭</div><p>Документов не найдено</p></div></td></tr>
@@ -63,4 +104,97 @@
     </tbody>
   </table>
 </div>
+
+{# ── Пагинация ── #}
+{% if page_obj.has_other_pages %}
+<div style="display:flex;align-items:center;justify-content:space-between;margin-top:16px;font-size:13px;">
+  <div style="color:var(--muted)">
+    Показано {{ page_obj.start_index }}–{{ page_obj.end_index }} из <strong>{{ total }}</strong> документов
+  </div>
+  <div style="display:flex;gap:4px;align-items:center">
+    {% if page_obj.has_previous %}
+    <a href="?{% if filters.type %}type={{ filters.type }}&{% endif %}{% if filters.q %}q={{ filters.q }}&{% endif %}{% if filters.date_from %}date_from={{ filters.date_from }}&{% endif %}{% if filters.date_to %}date_to={{ filters.date_to }}&{% endif %}page={{ page_obj.previous_page_number }}"
+       style="padding:6px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;text-decoration:none;color:var(--text)">← Назад</a>
+    {% endif %}
+
+    {% for num in page_obj.paginator.page_range %}
+      {% if page_obj.number == num %}
+        <span style="padding:6px 12px;background:var(--accent);border-radius:8px;color:#fff;font-weight:600">{{ num }}</span>
+      {% elif num >= page_obj.number|add:"-3" and num <= page_obj.number|add:"3" %}
+        <a href="?{% if filters.type %}type={{ filters.type }}&{% endif %}{% if filters.q %}q={{ filters.q }}&{% endif %}{% if filters.date_from %}date_from={{ filters.date_from }}&{% endif %}{% if filters.date_to %}date_to={{ filters.date_to }}&{% endif %}page={{ num }}"
+           style="padding:6px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;text-decoration:none;color:var(--text)">{{ num }}</a>
+      {% endif %}
+    {% endfor %}
+
+    {% if page_obj.has_next %}
+    <a href="?{% if filters.type %}type={{ filters.type }}&{% endif %}{% if filters.q %}q={{ filters.q }}&{% endif %}{% if filters.date_from %}date_from={{ filters.date_from }}&{% endif %}{% if filters.date_to %}date_to={{ filters.date_to }}&{% endif %}page={{ page_obj.next_page_number }}"
+       style="padding:6px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;text-decoration:none;color:var(--text)">Вперёд →</a>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+<div style="text-align:right;margin-top:10px;font-size:12px;color:var(--muted)">
+  Всего: <strong>{{ total }}</strong> документов
+</div>
+{% endif %}
+
+<script>
+const searchInput = document.getElementById('searchInput');
+const tableBody   = document.getElementById('tableBody');
+const spinner     = document.getElementById('searchSpinner');
+const countNum    = document.getElementById('countNum');
+let searchTimer = null, lastQuery = '';
+
+searchInput.addEventListener('input', function() {
+  const q = this.value.trim();
+  document.getElementById('hiddenQ').value = q;
+  clearTimeout(searchTimer);
+  if (q === lastQuery) return;
+  searchTimer = setTimeout(() => doSearch(q), 300);
+});
+
+function doSearch(q) {
+  lastQuery = q;
+  spinner.style.display = 'block';
+  const type = document.getElementById('typeSelect').value;
+  const params = new URLSearchParams({ q, type, limit: 100 });
+  fetch('/api/search/?' + params)
+    .then(r => r.json())
+    .then(data => { spinner.style.display = 'none'; renderResults(data.results, q); countNum.textContent = data.shown; })
+    .catch(() => { spinner.style.display = 'none'; });
+}
+
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function hi(text, q) {
+  if (!q) return esc(text);
+  return esc(text).replace(new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + ')', 'gi'), '<mark>$1</mark>');
+}
+
+function renderResults(results, q) {
+  if (!results.length) {
+    tableBody.innerHTML = `<tr><td colspan="9"><div class="empty"><div class="empty-icon">🔍</div><p>Ничего не найдено по запросу «${esc(q)}»</p></div></td></tr>`;
+    return;
+  }
+  tableBody.innerHTML = results.map(d => `<tr>
+    <td><span class="badge badge-${d.doc_type}">${d.doc_type}</span></td>
+    <td class="td-num">${hi(d.number, q)}</td>
+    <td class="td-mono">${d.doc_date}</td>
+    <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${hi(d.supplier_name !== '—' ? d.supplier_name : d.supplier_gln, q)}</td>
+    <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${hi(d.buyer_name !== '—' ? d.buyer_name : d.buyer_gln, q)}</td>
+    <td><span class="badge badge-${d.status}">${d.status_label}</span></td>
+    <td class="td-mono" style="text-align:center">—</td>
+    <td class="td-mono">${d.received_at}</td>
+    <td><div class="actions"><a href="${d.url}" class="btn-sm btn-detail">Детали</a></div></td>
+  </tr>`).join('');
+}
+
+function retryQueue(id, btn) {
+  btn.disabled = true; btn.textContent = '...';
+  fetch(`/api/retry/${id}/`, {method:'POST', headers:{'X-CSRFToken': getCookie('csrftoken')}})
+    .then(r => r.json())
+    .then(d => { btn.textContent = d.ok ? '✓' : '✗'; setTimeout(() => location.reload(), 800); })
+    .catch(() => { btn.disabled = false; btn.textContent = '↺'; });
+}
+function getCookie(n) { const m = document.cookie.match('(^|;)\\s*' + n + '\\s*=\\s*([^;]+)'); return m ? m.pop() : ''; }
+</script>
 {% endblock %}

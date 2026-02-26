@@ -5,7 +5,9 @@
 {% block page_sub %}Мониторинг документооборота Docrobot → 1С{% endblock %}
 
 {% block topbar_actions %}
-<a href="{% url 'reports_export' %}" class="btn btn-secondary">⬇ Экспорт CSV</a>
+<button class="btn btn-primary" id="pollNowBtn" onclick="pollNow()">⚡ Получить сейчас</button>
+<a href="{% url 'healthcheck' %}" class="btn btn-secondary">🩺 Статус системы</a>
+<a href="{% url 'reports_export' %}" class="btn btn-secondary">⬇ CSV</a>
 {% endblock %}
 
 {% block content %}
@@ -14,19 +16,19 @@
 <div class="stats-grid">
   <div class="stat-card" style="--accent-color:var(--accent)">
     <div class="stat-label">Всего документов</div>
-    <div class="stat-value blue">{{ total_docs }}</div>
+    <div class="stat-value blue" id="rt-total">{{ total_docs }}</div>
   </div>
   <div class="stat-card" style="--accent-color:var(--accent2)">
     <div class="stat-label">Отправлено в 1С</div>
-    <div class="stat-value green">{{ total_sent }}</div>
+    <div class="stat-value green" id="rt-sent">{{ total_sent }}</div>
   </div>
   <div class="stat-card" style="--accent-color:var(--warn)">
     <div class="stat-label">Ожидают</div>
-    <div class="stat-value warn">{{ pending }}</div>
+    <div class="stat-value warn" id="rt-pending">{{ pending }}</div>
   </div>
   <div class="stat-card" style="--accent-color:var(--danger)">
     <div class="stat-label">Ошибки</div>
-    <div class="stat-value red">{{ total_errors }}</div>
+    <div class="stat-value red" id="rt-errors">{{ total_errors }}</div>
   </div>
   {% for type, label in doc_stats.items %}
   <div class="stat-card">
@@ -96,7 +98,7 @@
   </div>
   <table>
     <thead><tr><th>Время</th><th>Уровень</th><th>Действие</th><th>Сообщение</th></tr></thead>
-    <tbody>
+    <tbody id="rt-logs">
       {% for log in recent_logs %}
       <tr>
         <td class="td-mono">{{ log.created_at|date:"d.m H:i:s" }}</td>
@@ -114,6 +116,7 @@
 
 {% block extra_js %}
 <script>
+// ── График за 7 дней ─────────────────────────────────
 const data = {{ seven_days|safe }};
 const max  = Math.max(...data.map(d => d.count), 1);
 const wrap = document.getElementById('week-chart');
@@ -126,5 +129,99 @@ data.forEach(d => {
       <div style="font-size:9px;color:var(--text3);">${d.day}</div>
     </div>`;
 });
+
+// ── Авто-обновление каждые 30 секунд ─────────────────
+let lastDocCount = {{ total_docs }};
+
+function refreshStats() {
+  fetch('/api/dashboard/stats/')
+    .then(r => r.json())
+    .then(d => {
+      // Обновляем счётчики
+      const totalEl = document.getElementById('rt-total');
+      const sentEl  = document.getElementById('rt-sent');
+      const errEl   = document.getElementById('rt-errors');
+      const pendEl  = document.getElementById('rt-pending');
+      const timeEl  = document.getElementById('rt-time');
+
+      if (totalEl) totalEl.textContent = d.total_docs;
+      if (sentEl)  sentEl.textContent  = d.total_sent;
+      if (errEl)   errEl.textContent   = d.total_errors;
+      if (pendEl)  pendEl.textContent  = d.pending;
+      if (timeEl)  timeEl.textContent  = d.server_time;
+
+      // Новые документы — мигаем
+      if (d.total_docs > lastDocCount) {
+        const diff = d.total_docs - lastDocCount;
+        showNotification(`📥 Новых документов: ${diff}`);
+        document.title = `(${diff} new) Docrobot EDI`;
+        setTimeout(() => document.title = 'Docrobot EDI Gateway', 5000);
+        lastDocCount = d.total_docs;
+      }
+
+      // Обновляем последние логи
+      const logsBody = document.getElementById('rt-logs');
+      if (logsBody && d.last_logs.length) {
+        logsBody.innerHTML = d.last_logs.map(l => `
+          <tr>
+            <td class="td-mono">${l.time}</td>
+            <td><span class="badge badge-${l.level === 'error' ? 'error-lvl' : l.level === 'warn' ? 'warn' : 'info'}">${l.level}</span></td>
+            <td class="td-mono">${l.action}</td>
+            <td style="font-size:12px;">${l.message}</td>
+          </tr>`).join('');
+      }
+    })
+    .catch(() => {});
+}
+
+function showNotification(text) {
+  const el = document.createElement('div');
+  el.textContent = text;
+  el.style.cssText = `
+    position:fixed;top:20px;right:20px;z-index:9999;
+    background:#1E3A5F;color:#fff;padding:12px 20px;
+    border-radius:10px;font-size:13px;font-weight:600;
+    box-shadow:0 4px 16px rgba(0,0,0,.3);
+    animation:slideIn .3s ease;
+  `;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+// Запускаем обновление
+setInterval(refreshStats, 30000);
+
+// ── Кнопка «Получить сейчас» ─────────────────────────
+function pollNow() {
+  const btn = document.getElementById("pollNowBtn");
+  btn.disabled = true;
+  btn.textContent = "⏳ Опрашиваем...";
+
+  fetch("/api/poll-now/", {
+    method: "POST",
+    headers: {"X-CSRFToken": getCookie("csrftoken")}
+  })
+  .then(r => r.json())
+  .then(d => {
+    btn.textContent = "✓ Запущено";
+    showNotification("🔄 Поллинг запущен, подождите...");
+    // Через 5 секунд обновляем статистику
+    setTimeout(() => {
+      refreshStats();
+      btn.disabled = false;
+      btn.textContent = "⚡ Получить сейчас";
+    }, 5000);
+  })
+  .catch(() => {
+    btn.disabled = false;
+    btn.textContent = "⚡ Получить сейчас";
+    showNotification("❌ Ошибка запуска");
+  });
+}
+
+function getCookie(n) {
+  const m = document.cookie.match("(^|;)\s*" + n + "\s*=\s*([^;]+)");
+  return m ? m.pop() : "";
+}
 </script>
 {% endblock %}

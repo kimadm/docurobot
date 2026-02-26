@@ -25,6 +25,7 @@ class Command(BaseCommand):
             try:
                 self._poll_cycle(client)
                 self._process_queue()
+                self._maybe_cleanup()
             except KeyboardInterrupt:
                 self.stdout.write('\nОстановлено.')
                 break
@@ -42,7 +43,9 @@ class Command(BaseCommand):
 
         try:
             documents = client.get_incoming_documents()
+            logger.debug(f'Получено из Docrobot: {len(documents)} документов')
         except Exception as e:
+            logger.error(f'Ошибка Docrobot API: {e}', exc_info=True)
             self.stdout.write(self.style.ERROR(f'Ошибка Docrobot: {e}'))
             return
 
@@ -66,13 +69,15 @@ class Command(BaseCommand):
                     buyer_gln     = normalized.get('buyerGln', ''),
                     supplier_name = normalized.get('supplierName', ''),
                     buyer_name    = normalized.get('buyerName', ''),
-                    raw_json = normalized,  # Сохраняем уже обработанный нами JSON с позициями
+                    raw_json = normalized,
                 )
                 SendQueue.objects.create(document=doc)
                 new_count += 1
+                logger.info(f'Новый документ: {doc.doc_type} №{doc.number} от {doc.supplier_name} [{doc.supplier_gln}]')
                 self.stdout.write(self.style.SUCCESS(f'  [+] Новый документ: {doc.doc_type} №{doc.number}'))
-                
+
             except Exception as e:
+                logger.error(f'Ошибка сохранения {normalized.get("docrobotId")}: {e}', exc_info=True)
                 self.stdout.write(self.style.ERROR(f'  [!] Ошибка сохранения {normalized.get("docrobotId")}: {e}'))
 
         if new_count > 0:
@@ -80,8 +85,10 @@ class Command(BaseCommand):
                 level='info', action='docrobot_poll',
                 message=f'Получено новых документов: {new_count}',
             )
+            logger.info(f'Цикл завершён: добавлено {new_count} новых документов')
             self.stdout.write(self.style.SUCCESS(f'ИТОГО: Добавлено {new_count} новых записей.'))
         else:
+            logger.debug('Новых документов нет')
             self.stdout.write(self.style.WARNING('Новых документов для загрузки нет.'))
 
     def _process_queue(self):
@@ -89,10 +96,10 @@ class Command(BaseCommand):
         from edi.services import process_document
 
         # Очередь на отправку
+        from django.db.models import Q
         queue = SendQueue.objects.filter(
-            status__in=[SendQueue.STATUS_PENDING, SendQueue.STATUS_ERROR]
-        ).filter(
-            next_retry__lte=timezone.now() if timezone.now() else True # Упрощенно для фильтра
+            Q(status=SendQueue.STATUS_PENDING, next_retry__isnull=True) |
+            Q(status=SendQueue.STATUS_ERROR, next_retry__lte=timezone.now())
         ).select_related('document')[:20]
 
         if not queue.exists():
@@ -113,3 +120,28 @@ class Command(BaseCommand):
                     self.stdout.write(self.style.ERROR(f'  [XX] {entry.document.number} — ошибка 1С'))
             except Exception as e:
                 self.stdout.write(self.style.ERROR(f'  [!] Ошибка очереди {entry.id}: {e}'))
+    def _maybe_cleanup(self):
+        """Запускает очистку раз в сутки если настроена."""
+        import threading
+        from django.utils import timezone
+        from edi.models import ConnectionSettings, ActivityLog
+
+        try:
+            cfg = ConnectionSettings.get()
+            if not cfg.cleanup_days:
+                return
+            # Проверяем, делали ли сегодня уже очистку
+            today = timezone.now().date()
+            already = ActivityLog.objects.filter(
+                action='cleanup',
+                created_at__date=today,
+            ).exists()
+            if already:
+                return
+            # Запускаем в фоне
+            def _run():
+                from django.core.management import call_command
+                call_command('cleanup_old')
+            threading.Thread(target=_run, daemon=True).start()
+        except Exception:
+            pass

@@ -1,0 +1,307 @@
+{% extends "edi/base.html" %}
+{% block title %}Печатные формы — Docrobot EDI{% endblock %}
+
+{% block content %}
+<style>
+  .pf-header { margin-bottom: 28px; }
+  .pf-header h1 { font-size: 22px; font-weight: 700; color: var(--text); margin: 0 0 4px; }
+  .pf-header p  { color: var(--muted); font-size: 13px; margin: 0; }
+
+  /* ── Фильтр-карточка ── */
+  .filter-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px 24px; margin-bottom: 24px;
+  }
+  .filter-grid {
+    display: grid; grid-template-columns: 1fr 1fr 1fr auto auto;
+    gap: 12px; align-items: end;
+  }
+  .filter-group label {
+    display: block; font-size: 11px; font-weight: 600;
+    color: var(--muted); text-transform: uppercase;
+    letter-spacing: .5px; margin-bottom: 6px;
+  }
+  .filter-group input,
+  .filter-group select {
+    width: 100%; padding: 8px 12px; font-size: 13px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text); outline: none;
+    transition: border-color .2s;
+  }
+  .filter-group input:focus,
+  .filter-group select:focus { border-color: var(--accent); }
+
+  /* ── Кнопки экспорта ── */
+  .btn-export {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 9px 16px; border-radius: 8px; font-size: 13px;
+    font-weight: 600; cursor: pointer; border: none;
+    transition: all .15s; text-decoration: none; white-space: nowrap;
+  }
+  .btn-excel  { background: #1D6F42; color: #fff; }
+  .btn-excel:hover  { background: #155232; }
+  .btn-pdf    { background: #C0392B; color: #fff; }
+  .btn-pdf:hover    { background: #922B21; }
+  .btn-xml    { background: #2471A3; color: #fff; }
+  .btn-xml:hover    { background: #1A5276; }
+  .btn-outline {
+    background: transparent; color: var(--accent);
+    border: 1px solid var(--accent);
+  }
+  .btn-outline:hover { background: rgba(59,130,246,.08); }
+
+  .export-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+
+  /* ── Статистика быстрая ── */
+  .stat-pills { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
+  .stat-pill {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 20px; padding: 6px 14px; font-size: 12px;
+  }
+  .stat-pill span { font-weight: 700; color: var(--accent); font-size: 14px; }
+
+  /* ── Таблица документов ── */
+  .docs-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; overflow: hidden;
+  }
+  .docs-card-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 20px; border-bottom: 1px solid var(--border);
+  }
+  .docs-card-header h3 { font-size: 14px; font-weight: 600; margin: 0; }
+  .docs-count { font-size: 12px; color: var(--muted); }
+
+  table.pf-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.pf-table th {
+    padding: 10px 12px; text-align: left; font-size: 11px;
+    font-weight: 600; color: var(--muted); text-transform: uppercase;
+    letter-spacing: .4px; border-bottom: 1px solid var(--border);
+    background: var(--surface2);
+  }
+  table.pf-table td {
+    padding: 10px 12px; border-bottom: 1px solid var(--border);
+    vertical-align: middle; color: var(--text);
+  }
+  table.pf-table tr:last-child td { border-bottom: none; }
+  table.pf-table tr:hover td { background: var(--surface2); }
+
+  .cb-col { width: 36px; text-align: center; }
+  input[type=checkbox] { width: 15px; height: 15px; cursor: pointer; accent-color: var(--accent); }
+
+  .badge-type {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 10px; font-weight: 700; letter-spacing: .3px;
+  }
+  .badge-ORDER   { background: #EFF6FF; color: #1D4ED8; }
+  .badge-ORDRSP  { background: #F0FDF4; color: #16A34A; }
+  .badge-DESADV  { background: #FFF7ED; color: #C2410C; }
+  .badge-INVOICE { background: #FDF4FF; color: #9333EA; }
+  .badge-PRICAT  { background: #F0FDFA; color: #0D9488; }
+
+  .mono { font-family: monospace; font-size: 11px; color: var(--muted); }
+  .text-right { text-align: right; }
+  .text-center { text-align: center; }
+
+  /* ── Нет документов ── */
+  .empty-state {
+    text-align: center; padding: 60px 20px; color: var(--muted);
+  }
+  .empty-state .ico { font-size: 48px; margin-bottom: 12px; }
+  .empty-state p { font-size: 14px; }
+
+  /* ── Плавающая панель при выборе ── */
+  .selection-bar {
+    display: none; position: fixed; bottom: 24px; left: 50%;
+    transform: translateX(-50%); background: var(--surface);
+    border: 1px solid var(--accent); border-radius: 12px;
+    padding: 12px 20px; box-shadow: 0 8px 32px rgba(0,0,0,.2);
+    align-items: center; gap: 12px; z-index: 100;
+    font-size: 13px; white-space: nowrap;
+  }
+  .selection-bar.visible { display: flex; }
+  .sel-count { font-weight: 700; color: var(--accent); }
+
+  @media(max-width:900px) {
+    .filter-grid { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+
+<div class="pf-header">
+  <h1>🖨️ Печатные формы</h1>
+  <p>Выгрузка документов в Excel, PDF и XML. Выберите период, тип и нужные документы.</p>
+</div>
+
+{# ── Фильтры ── #}
+<form method="get" id="filterForm">
+  <div class="filter-card">
+    <div class="filter-grid">
+      <div class="filter-group">
+        <label>Тип документа</label>
+        <select name="doc_type">
+          <option value="">Все типы</option>
+          <option value="ORDER"   {% if request.GET.doc_type == "ORDER"   %}selected{% endif %}>Заказы (ORDER)</option>
+          <option value="ORDRSP"  {% if request.GET.doc_type == "ORDRSP"  %}selected{% endif %}>Подтверждения (ORDRSP)</option>
+          <option value="DESADV"  {% if request.GET.doc_type == "DESADV"  %}selected{% endif %}>Отгрузки (DESADV)</option>
+          <option value="INVOICE" {% if request.GET.doc_type == "INVOICE" %}selected{% endif %}>Счета-фактуры (INVOICE)</option>
+          <option value="PRICAT"  {% if request.GET.doc_type == "PRICAT"  %}selected{% endif %}>Прайс-листы (PRICAT)</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Дата с</label>
+        <input type="date" name="date_from" value="{{ request.GET.date_from }}">
+      </div>
+      <div class="filter-group">
+        <label>Дата по</label>
+        <input type="date" name="date_to" value="{{ request.GET.date_to }}">
+      </div>
+      <div class="filter-group">
+        <label>&nbsp;</label>
+        <button type="submit" class="btn-export btn-outline">🔍 Применить</button>
+      </div>
+      <div class="filter-group">
+        <label>&nbsp;</label>
+        <a href="{% url 'print_forms' %}" class="btn-export btn-outline" style="color:var(--muted)">✕ Сбросить</a>
+      </div>
+    </div>
+  </div>
+</form>
+
+{# ── Быстрая статистика ── #}
+<div class="stat-pills">
+  <div class="stat-pill">Найдено <span>{{ documents|length }}</span> документов</div>
+  {% for t, cnt in type_counts.items %}
+  <div class="stat-pill">{{ t }} <span>{{ cnt }}</span></div>
+  {% endfor %}
+</div>
+
+{# ── Кнопки экспорта всех найденных ── #}
+<div class="export-btns">
+  <a href="?{{ request.GET.urlencode }}&export=xlsx" class="btn-export btn-excel">
+    📊 Excel (все найденные)
+  </a>
+  <a href="?{{ request.GET.urlencode }}&export=pdf" class="btn-export btn-pdf">
+    📄 PDF (все найденные)
+  </a>
+  <a href="?{{ request.GET.urlencode }}&export=xml" class="btn-export btn-xml">
+    &lt;/&gt; XML (все найденные)
+  </a>
+</div>
+
+{# ── Таблица ── #}
+<div class="docs-card">
+  <div class="docs-card-header">
+    <h3>Документы</h3>
+    <div style="display:flex;gap:8px;align-items:center">
+      <label style="font-size:12px;color:var(--muted);cursor:pointer">
+        <input type="checkbox" id="selectAll" style="margin-right:4px"> Выбрать все
+      </label>
+      <span class="docs-count">{{ documents|length }} шт.</span>
+    </div>
+  </div>
+
+  {% if documents %}
+  <table class="pf-table" id="docsTable">
+    <thead>
+      <tr>
+        <th class="cb-col"><input type="checkbox" id="selectAllHead"></th>
+        <th>Тип</th>
+        <th>Номер</th>
+        <th>Дата</th>
+        <th>Поставщик</th>
+        <th>Покупатель</th>
+        <th class="text-right">Позиций</th>
+        <th class="text-right">Сумма</th>
+        <th class="text-center">Скачать</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for doc in documents %}
+      <tr>
+        <td class="cb-col">
+          <input type="checkbox" class="doc-cb" value="{{ doc.pk }}">
+        </td>
+        <td>
+          <span class="badge-type badge-{{ doc.doc_type }}">{{ doc.doc_type }}</span>
+        </td>
+        <td><strong>{{ doc.number|default:"—" }}</strong></td>
+        <td>{{ doc.doc_date|date:"d.m.Y"|default:"—" }}</td>
+        <td class="mono">{{ doc.supplier_gln|default:"—" }}</td>
+        <td class="mono">{{ doc.buyer_gln|default:"—" }}</td>
+        <td class="text-right">{{ doc.raw_json.positions|length|default:"0" }}</td>
+        <td class="text-right">
+          {% if doc.raw_json.totalAmount %}
+            {{ doc.raw_json.totalAmount|floatformat:2 }}
+          {% else %}—{% endif %}
+        </td>
+        <td class="text-center" style="white-space:nowrap">
+          <a href="{% url 'print_single' doc.pk 'xlsx' %}" class="btn-export btn-excel"
+             style="padding:4px 8px;font-size:11px">📊</a>
+          <a href="{% url 'print_single' doc.pk 'pdf' %}"  class="btn-export btn-pdf"
+             style="padding:4px 8px;font-size:11px">📄</a>
+          <a href="{% url 'print_single' doc.pk 'xml' %}"  class="btn-export btn-xml"
+             style="padding:4px 8px;font-size:11px">&lt;/&gt;</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty-state">
+    <div class="ico">📭</div>
+    <p>Документы не найдены. Измените фильтры или дождитесь поллинга.</p>
+  </div>
+  {% endif %}
+</div>
+
+{# ── Плавающая панель выбора ── #}
+<div class="selection-bar" id="selectionBar">
+  <span>Выбрано: <span class="sel-count" id="selCount">0</span></span>
+  <button onclick="exportSelected('xlsx')" class="btn-export btn-excel">📊 Excel</button>
+  <button onclick="exportSelected('pdf')"  class="btn-export btn-pdf">📄 PDF</button>
+  <button onclick="exportSelected('xml')"  class="btn-export btn-xml">&lt;/&gt; XML</button>
+  <button onclick="clearSelection()" class="btn-export btn-outline" style="padding:6px 12px">✕</button>
+</div>
+
+<script>
+// ── Выбор документов ──
+const bar    = document.getElementById('selectionBar');
+const cntEl  = document.getElementById('selCount');
+
+function updateBar() {
+  const checked = document.querySelectorAll('.doc-cb:checked');
+  const n = checked.length;
+  cntEl.textContent = n;
+  bar.classList.toggle('visible', n > 0);
+}
+
+document.querySelectorAll('.doc-cb').forEach(cb => cb.addEventListener('change', updateBar));
+
+['selectAll','selectAllHead'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('change', function() {
+    document.querySelectorAll('.doc-cb').forEach(cb => cb.checked = this.checked);
+    updateBar();
+  });
+});
+
+function clearSelection() {
+  document.querySelectorAll('.doc-cb').forEach(cb => cb.checked = false);
+  ['selectAll','selectAllHead'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.checked = false;
+  });
+  updateBar();
+}
+
+function exportSelected(fmt) {
+  const ids = Array.from(document.querySelectorAll('.doc-cb:checked')).map(cb => cb.value);
+  if (!ids.length) return;
+  const params = new URLSearchParams();
+  ids.forEach(id => params.append('ids', id));
+  params.set('export', fmt);
+  window.location.href = '{% url "print_selected" %}?' + params.toString();
+}
+</script>
+{% endblock %}

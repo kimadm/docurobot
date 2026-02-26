@@ -16,6 +16,7 @@ POST /api/webhook/       — вебхук: принять документ от 
 import json
 import csv
 import io
+import logging
 from datetime import date, timedelta, datetime
 from django.shortcuts import render, get_object_or_404, redirect
 from django.http import JsonResponse, HttpResponse
@@ -27,9 +28,11 @@ from django.utils import timezone
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
-from .models import EdiDocument, SendQueue, ActivityLog
+from .models import EdiDocument, SendQueue, ActivityLog, DocumentComment
 from .services import process_document, DocrobotClient
 from .xml_builder import build_xml
+
+logger = logging.getLogger('edi')
 
 
 # ─── Дашборд ─────────────────────────────────────────────
@@ -77,33 +80,47 @@ def dashboard(request):
 # ─── Документы ───────────────────────────────────────────
 
 def documents(request):
+    from django.core.paginator import Paginator
     qs = EdiDocument.objects.select_related('queue_entry').order_by('-received_at')
-    # Фильтры
-    doc_type = request.GET.get('type', '')
-    search   = request.GET.get('q', '')
+
+    doc_type  = request.GET.get('type', '')
+    search    = request.GET.get('q', '')
     date_from = request.GET.get('date_from', '')
     date_to   = request.GET.get('date_to', '')
 
     if doc_type:
         qs = qs.filter(doc_type=doc_type)
     if search:
-        qs = qs.filter(Q(number__icontains=search) | Q(supplier_name__icontains=search) | Q(buyer_name__icontains=search))
+        qs = qs.filter(
+            Q(number__icontains=search) |
+            Q(supplier_name__icontains=search) |
+            Q(buyer_name__icontains=search) |
+            Q(supplier_gln__icontains=search) |
+            Q(buyer_gln__icontains=search)
+        )
     if date_from:
         qs = qs.filter(received_at__date__gte=date_from)
     if date_to:
         qs = qs.filter(received_at__date__lte=date_to)
 
+    paginator = Paginator(qs, 50)
+    page_num  = request.GET.get('page', 1)
+    page_obj  = paginator.get_page(page_num)
+
     return render(request, 'edi/documents.html', {
-        'documents': qs[:100],
+        'documents': page_obj,
+        'page_obj':  page_obj,
         'doc_types': EdiDocument.DOC_TYPES,
         'filters': {'type': doc_type, 'q': search, 'date_from': date_from, 'date_to': date_to},
+        'total': paginator.count,
     })
 
 
 def document_detail(request, pk):
-    doc = get_object_or_404(EdiDocument, pk=pk)
+    doc   = get_object_or_404(EdiDocument, pk=pk)
     queue = getattr(doc, 'queue_entry', None)
     logs  = doc.logs.order_by('-created_at')
+    comments = doc.comments.order_by('-created_at')
 
     # Генерируем XML для просмотра если нет
     if not doc.xml_content and doc.raw_json:
@@ -114,8 +131,44 @@ def document_detail(request, pk):
             pass
 
     return render(request, 'edi/document_detail.html', {
-        'doc': doc, 'queue': queue, 'logs': logs,
+        'doc': doc, 'queue': queue, 'logs': logs, 'comments': comments,
+        'importance_choices': DocumentComment.IMPORTANCE_CHOICES,
     })
+
+
+def api_comment_add(request, pk):
+    """POST /api/comments/<pk>/add/ — добавить комментарий к документу."""
+    if request.method != 'POST':
+        return JsonResponse({'ok': False}, status=405)
+    doc  = get_object_or_404(EdiDocument, pk=pk)
+    text = request.POST.get('text', '').strip()
+    if not text:
+        return JsonResponse({'ok': False, 'error': 'Текст не может быть пустым'}, status=400)
+
+    importance = request.POST.get('importance', DocumentComment.IMPORTANCE_NORMAL)
+    author     = request.POST.get('author', '').strip() or 'Оператор'
+
+    comment = DocumentComment.objects.create(
+        document=doc, text=text, importance=importance, author=author
+    )
+    logger.info(f'Комментарий к {doc.doc_type} №{doc.number}: [{importance}] {text[:60]}')
+    return JsonResponse({
+        'ok': True,
+        'id':         comment.pk,
+        'text':       comment.text,
+        'importance': comment.importance,
+        'author':     comment.author,
+        'created_at': comment.created_at.strftime('%d.%m.%Y %H:%M'),
+    })
+
+
+def api_comment_delete(request, comment_id):
+    """POST /api/comments/<id>/delete/ — удалить комментарий."""
+    if request.method != 'POST':
+        return JsonResponse({'ok': False}, status=405)
+    comment = get_object_or_404(DocumentComment, pk=comment_id)
+    comment.delete()
+    return JsonResponse({'ok': True})
 
 
 # ─── Очередь ─────────────────────────────────────────────
@@ -135,18 +188,98 @@ def queue(request):
 # ─── Логи ────────────────────────────────────────────────
 
 def logs(request):
+    from django.core.paginator import Paginator
     qs = ActivityLog.objects.select_related('document').order_by('-created_at')
-    level = request.GET.get('level', '')
+    level  = request.GET.get('level', '')
     action = request.GET.get('action', '')
+    date_from = request.GET.get('date_from', '')
+    date_to   = request.GET.get('date_to', '')
+
     if level:
         qs = qs.filter(level=level)
     if action:
         qs = qs.filter(action__icontains=action)
+    if date_from:
+        qs = qs.filter(created_at__date__gte=date_from)
+    if date_to:
+        qs = qs.filter(created_at__date__lte=date_to)
+
+    # Экспорт в Excel
+    if request.GET.get('export') == 'xlsx':
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment
+            from openpyxl.utils import get_column_letter
+        except ImportError:
+            return HttpResponse('openpyxl не установлен', status=500)
+
+        import io
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = 'Логи'
+        ws.sheet_view.showGridLines = False
+
+        # Заголовок
+        ws.merge_cells('A1:F1')
+        ws['A1'] = f'Логи активности Docrobot EDI — {date.today().strftime("%d.%m.%Y")}'
+        ws['A1'].font = Font(name='Arial', bold=True, size=13, color='1E3A5F')
+        ws['A1'].alignment = Alignment(horizontal='center')
+        ws.row_dimensions[1].height = 24
+
+        # Шапка
+        HFILL = PatternFill('solid', fgColor='1E3A5F')
+        HFONT = Font(name='Arial', bold=True, color='FFFFFF', size=10)
+        headers = ['Время', 'Уровень', 'Действие', 'Сообщение', 'Документ', 'ID документа']
+        widths  = [20, 10, 20, 60, 20, 20]
+        for col, (h, w) in enumerate(zip(headers, widths), 1):
+            cell = ws.cell(row=3, column=col, value=h)
+            cell.font = HFONT; cell.fill = HFILL
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            ws.column_dimensions[get_column_letter(col)].width = w
+        ws.row_dimensions[3].height = 18
+
+        ALT = PatternFill('solid', fgColor='F5F8FF')
+        DFONT = Font(name='Arial', size=9)
+        LEVEL_COLORS = {'error': 'FEE2E2', 'warn': 'FEF3C7', 'info': 'F0FDF4'}
+
+        for i, log in enumerate(qs[:5000], 1):
+            row = i + 3
+            fill = PatternFill('solid', fgColor=LEVEL_COLORS.get(log.level, 'FFFFFF')) if log.level in LEVEL_COLORS else (ALT if i % 2 == 0 else None)
+            vals = [
+                log.created_at.strftime('%d.%m.%Y %H:%M:%S'),
+                log.level.upper(),
+                log.action,
+                log.message,
+                log.document.number if log.document else '—',
+                log.document.docrobot_id if log.document else '—',
+            ]
+            for col, val in enumerate(vals, 1):
+                cell = ws.cell(row=row, column=col, value=val)
+                cell.font = DFONT
+                if fill: cell.fill = fill
+                cell.alignment = Alignment(vertical='center', wrap_text=(col == 4))
+            ws.row_dimensions[row].height = 15
+
+        ws.freeze_panes = 'A4'
+        buf = io.BytesIO()
+        wb.save(buf); buf.seek(0)
+        fname = f'logs_{date.today().strftime("%Y%m%d")}.xlsx'
+        resp = HttpResponse(buf.read(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        resp['Content-Disposition'] = f'attachment; filename="{fname}"'
+        return resp
+
+    paginator = Paginator(qs, 100)
+    page_obj  = paginator.get_page(request.GET.get('page', 1))
+
     return render(request, 'edi/logs.html', {
-        'logs': qs[:200],
+        'logs': page_obj,
+        'page_obj': page_obj,
+        'total': paginator.count,
         'levels': ActivityLog.LEVELS,
         'filter_level': level,
         'filter_action': action,
+        'filter_date_from': date_from,
+        'filter_date_to':   date_to,
     })
 
 
@@ -447,6 +580,8 @@ def connections_view(request):
         if new_dr_pass:
             cfg.docrobot_password  = new_dr_pass
         cfg.docrobot_poll_interval = int(request.POST.get('docrobot_poll_interval', 60))
+        cfg.docrobot_gln           = request.POST.get('docrobot_gln', '').strip()
+        cfg.cleanup_days           = int(request.POST.get('cleanup_days', 90) or 90)
 
         cfg.onec_url      = request.POST.get('onec_url', cfg.onec_url).strip()
         cfg.onec_username = request.POST.get('onec_username', '').strip()
@@ -574,3 +709,513 @@ def api_test_onec(request):
         return Response({'success': False, 'error': 'Таймаут — 1С не отвечает за 10 секунд'}, status=200)
     except Exception as e:
         return Response({'success': False, 'error': str(e)}, status=500)
+
+
+# ═══════════════════════════════════════════════════════
+# Печатные формы
+# ═══════════════════════════════════════════════════════
+
+def print_forms(request):
+    """Страница печатных форм с фильтрами и экспортом."""
+    from .export import export_xlsx, export_pdf, export_xml_bundle
+    from django.db.models import Count
+
+    qs = EdiDocument.objects.order_by('-received_at')
+
+    # Фильтры
+    doc_type  = request.GET.get('doc_type', '')
+    date_from = request.GET.get('date_from', '')
+    date_to   = request.GET.get('date_to', '')
+
+    if doc_type:
+        qs = qs.filter(doc_type=doc_type)
+    if date_from:
+        qs = qs.filter(doc_date__gte=date_from)
+    if date_to:
+        qs = qs.filter(doc_date__lte=date_to)
+
+    fmt = request.GET.get('export', '')
+    if fmt in ('xlsx', 'pdf', 'xml'):
+        docs = list(qs)
+        if fmt == 'xlsx':
+            title = f"Документы EDI — {date_from or '...'} — {date_to or '...'}"
+            return export_xlsx(docs, title=title)
+        elif fmt == 'pdf':
+            return export_pdf(docs)
+        elif fmt == 'xml':
+            return export_xml_bundle(docs)
+
+    documents = list(qs[:500])
+    type_counts = {}
+    for d in documents:
+        type_counts[d.doc_type] = type_counts.get(d.doc_type, 0) + 1
+
+    return render(request, 'edi/print_forms.html', {
+        'documents':   documents,
+        'type_counts': type_counts,
+    })
+
+
+def print_single(request, pk, fmt):
+    """Скачать один документ в нужном формате."""
+    from .export import export_xlsx, export_pdf, export_xml_bundle
+    doc = get_object_or_404(EdiDocument, pk=pk)
+    docs = [doc]
+    if fmt == 'xlsx':
+        return export_xlsx(docs, title=f"{doc.doc_type} №{doc.number}")
+    elif fmt == 'pdf':
+        return export_pdf(docs)
+    elif fmt == 'xml':
+        return export_xml_bundle(docs)
+    return HttpResponse("Неизвестный формат", status=400)
+
+
+def print_selected(request):
+    """Экспорт выбранных документов (по списку ID)."""
+    from .export import export_xlsx, export_pdf, export_xml_bundle
+    ids = request.GET.getlist('ids')
+    fmt = request.GET.get('export', 'xlsx')
+    docs = list(EdiDocument.objects.filter(pk__in=ids).order_by('-received_at'))
+    if not docs:
+        return HttpResponse("Документы не найдены", status=404)
+    if fmt == 'xlsx':
+        return export_xlsx(docs, title=f"Выбранные документы ({len(docs)} шт.)")
+    elif fmt == 'pdf':
+        return export_pdf(docs)
+    elif fmt == 'xml':
+        return export_xml_bundle(docs)
+    return HttpResponse("Неизвестный формат", status=400)
+
+
+# ═══════════════════════════════════════════════════════
+# API: Живой поиск
+# ═══════════════════════════════════════════════════════
+
+def api_search(request):
+    """GET /api/search/?q=...&type=...&limit=20 — JSON для live-поиска."""
+    q         = request.GET.get('q', '').strip()
+    doc_type  = request.GET.get('type', '')
+    limit     = min(int(request.GET.get('limit', 20)), 100)
+
+    qs = EdiDocument.objects.select_related('queue_entry').order_by('-received_at')
+
+    if doc_type:
+        qs = qs.filter(doc_type=doc_type)
+    if q:
+        qs = qs.filter(
+            Q(number__icontains=q) |
+            Q(supplier_name__icontains=q) |
+            Q(buyer_name__icontains=q) |
+            Q(supplier_gln__icontains=q) |
+            Q(buyer_gln__icontains=q) |
+            Q(docrobot_id__icontains=q)
+        )
+
+    docs = qs[:limit]
+    results = []
+    for doc in docs:
+        q_entry = getattr(doc, 'queue_entry', None)
+        results.append({
+            'id':           doc.pk,
+            'doc_type':     doc.doc_type,
+            'number':       doc.number or '—',
+            'doc_date':     doc.doc_date.strftime('%d.%m.%Y') if doc.doc_date else '—',
+            'supplier_gln': doc.supplier_gln or '—',
+            'buyer_gln':    doc.buyer_gln or '—',
+            'supplier_name':doc.supplier_name or '—',
+            'status':       q_entry.status if q_entry else 'none',
+            'status_label': q_entry.get_status_display() if q_entry else '—',
+            'received_at':  doc.received_at.strftime('%d.%m.%Y %H:%M'),
+            'url':          f'/documents/{doc.pk}/',
+        })
+
+    return JsonResponse({'results': results, 'total': qs.count(), 'shown': len(results)})
+
+
+# ═══════════════════════════════════════════════════════
+# API: Дашборд реального времени
+# ═══════════════════════════════════════════════════════
+
+def api_dashboard_stats(request):
+    """GET /api/dashboard/stats/ — JSON со свежей статистикой для авто-обновления."""
+    from django.db.models import Count
+    from datetime import timedelta
+
+    queue_stats = {
+        row['status']: row['cnt']
+        for row in SendQueue.objects.values('status').annotate(cnt=Count('id'))
+    }
+    doc_stats = {
+        row['doc_type']: row['cnt']
+        for row in EdiDocument.objects.values('doc_type').annotate(cnt=Count('id'))
+    }
+
+    # Последние 5 документов
+    recent = []
+    for doc in EdiDocument.objects.select_related('queue_entry').order_by('-received_at')[:5]:
+        q = getattr(doc, 'queue_entry', None)
+        recent.append({
+            'id':         doc.pk,
+            'doc_type':   doc.doc_type,
+            'number':     doc.number or '—',
+            'status':     q.status if q else 'none',
+            'status_label': q.get_status_display() if q else '—',
+            'received_at': doc.received_at.strftime('%d.%m.%Y %H:%M'),
+        })
+
+    # Последний лог
+    last_logs = []
+    for log in ActivityLog.objects.order_by('-created_at')[:5]:
+        last_logs.append({
+            'level':   log.level,
+            'action':  log.action,
+            'message': log.message[:100],
+            'time':    log.created_at.strftime('%H:%M:%S'),
+        })
+
+    # Динамика за 7 дней
+    seven_days = []
+    for i in range(6, -1, -1):
+        day = date.today() - timedelta(days=i)
+        cnt = EdiDocument.objects.filter(received_at__date=day).count()
+        seven_days.append({'day': day.strftime('%d.%m'), 'count': cnt})
+
+    return JsonResponse({
+        'queue_stats':  queue_stats,
+        'doc_stats':    doc_stats,
+        'total_docs':   EdiDocument.objects.count(),
+        'total_sent':   SendQueue.objects.filter(status=SendQueue.STATUS_SENT).count(),
+        'total_errors': SendQueue.objects.filter(status__in=[SendQueue.STATUS_ERROR, SendQueue.STATUS_FAILED]).count(),
+        'pending':      SendQueue.objects.filter(status=SendQueue.STATUS_PENDING).count(),
+        'recent_docs':  recent,
+        'last_logs':    last_logs,
+        'seven_days':   seven_days,
+        'server_time':  timezone.now().strftime('%d.%m.%Y %H:%M:%S'),
+    })
+
+
+# ═══════════════════════════════════════════════════════
+# Кнопка «Получить сейчас»
+# ═══════════════════════════════════════════════════════
+
+@require_POST
+def api_poll_now(request):
+    """POST /api/poll-now/ — немедленный запуск одного цикла поллинга."""
+    import threading
+    from .services import DocrobotClient
+    from .models import EdiDocument, SendQueue, ActivityLog
+
+    def _run():
+        try:
+            client = DocrobotClient()
+            documents = client.get_incoming_documents()
+            new_count = 0
+            for normalized in documents:
+                doc_id = normalized.get('docrobotId', '')
+                if not doc_id:
+                    continue
+                if EdiDocument.objects.filter(docrobot_id=doc_id).exists():
+                    continue
+                doc = EdiDocument.objects.create(
+                    docrobot_id   = doc_id,
+                    doc_type      = normalized['docType'],
+                    number        = normalized.get('number', ''),
+                    doc_date      = normalized.get('date') or None,
+                    supplier_gln  = normalized.get('supplierGln', ''),
+                    buyer_gln     = normalized.get('buyerGln', ''),
+                    supplier_name = normalized.get('supplierName', ''),
+                    buyer_name    = normalized.get('buyerName', ''),
+                    raw_json      = normalized,
+                )
+                SendQueue.objects.create(document=doc)
+                new_count += 1
+            ActivityLog.objects.create(
+                level='info', action='manual_poll',
+                message=f'Ручной поллинг: получено {new_count} новых документов',
+            )
+        except Exception as e:
+            ActivityLog.objects.create(
+                level='error', action='manual_poll',
+                message=f'Ошибка ручного поллинга: {e}',
+            )
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    return JsonResponse({'ok': True, 'message': 'Поллинг запущен в фоне'})
+
+
+# ═══════════════════════════════════════════════════════
+# Healthcheck
+# ═══════════════════════════════════════════════════════
+
+def healthcheck(request):
+    """GET /health/ — страница статуса всех компонентов системы."""
+    import platform
+    import sys
+    from django.db import connection
+    from .models import ConnectionSettings, ActivityLog
+
+    checks = []
+
+    # 1. База данных
+    try:
+        with connection.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM edi_edidocument")
+            doc_count = cur.fetchone()[0]
+        checks.append({'name': 'База данных (SQLite)', 'status': 'ok',
+                        'detail': f'{doc_count} документов', 'icon': '🗄️'})
+    except Exception as e:
+        checks.append({'name': 'База данных (SQLite)', 'status': 'error',
+                        'detail': str(e), 'icon': '🗄️'})
+
+    # 2. Docrobot API — ping auth endpoint
+    try:
+        import requests as req
+        cfg = ConnectionSettings.get()
+        r = req.post(
+            'https://edi-api.docrobot.kz/api/v1/auth',
+            json={'login': cfg.docrobot_username, 'password': cfg.docrobot_password},
+            timeout=8,
+        )
+        if r.status_code == 200 and r.json().get('checkStatus') == 0:
+            checks.append({'name': 'Docrobot API', 'status': 'ok',
+                            'detail': f'Авторизация успешна · {cfg.docrobot_username}', 'icon': '🔗'})
+        else:
+            checks.append({'name': 'Docrobot API', 'status': 'warn',
+                            'detail': f'HTTP {r.status_code} · checkStatus={r.json().get("checkStatus")}', 'icon': '🔗'})
+    except Exception as e:
+        checks.append({'name': 'Docrobot API', 'status': 'error',
+                        'detail': str(e)[:120], 'icon': '🔗'})
+
+    # 3. 1С HTTP-сервис
+    try:
+        import requests as req
+        cfg = ConnectionSettings.get()
+        if cfg.onec_url and cfg.onec_url != 'http://localhost/hs/docrobot/orders':
+            auth = (cfg.onec_username, cfg.onec_password) if cfg.onec_username else None
+            r = req.get(cfg.onec_url, auth=auth, timeout=5)
+            # 404/405 — сервис есть, но неверный метод/путь — это нормально
+            if r.status_code < 500:
+                checks.append({'name': '1С HTTP-сервис', 'status': 'ok',
+                                'detail': f'HTTP {r.status_code} · {cfg.onec_url}', 'icon': '1️⃣'})
+            else:
+                checks.append({'name': '1С HTTP-сервис', 'status': 'error',
+                                'detail': f'HTTP {r.status_code} · сервер вернул ошибку', 'icon': '1️⃣'})
+        else:
+            checks.append({'name': '1С HTTP-сервис', 'status': 'warn',
+                            'detail': 'URL не настроен — перейдите в Подключения', 'icon': '1️⃣'})
+    except Exception as e:
+        checks.append({'name': '1С HTTP-сервис', 'status': 'error',
+                        'detail': str(e)[:120], 'icon': '1️⃣'})
+
+    # 4. Последний поллинг
+    try:
+        last_poll = ActivityLog.objects.filter(
+            action__in=['docrobot_poll', 'manual_poll']
+        ).order_by('-created_at').first()
+        if last_poll:
+            delta = timezone.now() - last_poll.created_at
+            mins  = int(delta.total_seconds() // 60)
+            status = 'ok' if mins < 10 else ('warn' if mins < 60 else 'error')
+            checks.append({'name': 'Последний поллинг', 'status': status,
+                            'detail': f'{mins} мин назад · {last_poll.message[:80]}', 'icon': '🔄'})
+        else:
+            checks.append({'name': 'Последний поллинг', 'status': 'warn',
+                            'detail': 'Поллинг ещё не запускался', 'icon': '🔄'})
+    except Exception as e:
+        checks.append({'name': 'Последний поллинг', 'status': 'error',
+                        'detail': str(e), 'icon': '🔄'})
+
+    # 5. Очередь — зависшие документы
+    try:
+        from datetime import timedelta
+        stuck = SendQueue.objects.filter(
+            status__in=[SendQueue.STATUS_ERROR, SendQueue.STATUS_FAILED]
+        ).count()
+        pending = SendQueue.objects.filter(status=SendQueue.STATUS_PENDING).count()
+        if stuck == 0:
+            checks.append({'name': 'Очередь отправки', 'status': 'ok',
+                            'detail': f'Ошибок нет · Ожидает: {pending}', 'icon': '📤'})
+        else:
+            checks.append({'name': 'Очередь отправки', 'status': 'warn',
+                            'detail': f'Ошибок: {stuck} · Ожидает: {pending}', 'icon': '📤'})
+    except Exception as e:
+        checks.append({'name': 'Очередь отправки', 'status': 'error',
+                        'detail': str(e), 'icon': '📤'})
+
+    # Системная информация
+    sys_info = {
+        'python':   sys.version.split()[0],
+        'platform': platform.system() + ' ' + platform.release(),
+        'django':   __import__('django').get_version(),
+        'db_path':  str(__import__('django').conf.settings.DATABASES['default']['NAME']),
+        'time':     timezone.now().strftime('%d.%m.%Y %H:%M:%S'),
+    }
+
+    overall = 'ok'
+    if any(c['status'] == 'error' for c in checks):
+        overall = 'error'
+    elif any(c['status'] == 'warn' for c in checks):
+        overall = 'warn'
+
+    # JSON-режим для внешних мониторингов
+    if request.GET.get('format') == 'json':
+        return JsonResponse({
+            'status': overall,
+            'checks': checks,
+            'sys': sys_info,
+        })
+
+    return render(request, 'edi/healthcheck.html', {
+        'checks':   checks,
+        'sys_info': sys_info,
+        'overall':  overall,
+    })
+
+
+# ═══════════════════════════════════════════════════════
+# Backup БД
+# ═══════════════════════════════════════════════════════
+
+def backup_db(request):
+    """GET /backup/ — скачать резервную копию SQLite."""
+    import shutil, io
+    from django.conf import settings as djset
+
+    db_path = djset.DATABASES['default']['NAME']
+    buf = io.BytesIO()
+    with open(db_path, 'rb') as f:
+        buf.write(f.read())
+    buf.seek(0)
+
+    fname = f'docrobot_backup_{date.today().strftime("%Y%m%d_%H%M")}.sqlite3'
+    ActivityLog.objects.create(level='info', action='db_backup', message=f'Скачана резервная копия БД: {fname}')
+
+    response = HttpResponse(buf.read(), content_type='application/octet-stream')
+    response['Content-Disposition'] = f'attachment; filename="{fname}"'
+    return response
+
+
+def api_cleanup_now(request):
+    """POST /api/cleanup/ — ручной запуск очистки старых документов."""
+    if request.method != 'POST':
+        return JsonResponse({'ok': False}, status=405)
+
+    import threading
+    def _run():
+        try:
+            from django.core.management import call_command
+            call_command('cleanup_old')
+        except Exception as e:
+            ActivityLog.objects.create(level='error', action='cleanup', message=str(e))
+
+    threading.Thread(target=_run, daemon=True).start()
+    return JsonResponse({'ok': True, 'message': 'Очистка запущена в фоне'})
+
+
+# ═══════════════════════════════════════════════════════
+# Статистика по поставщикам
+# ═══════════════════════════════════════════════════════
+
+def suppliers(request):
+    """Аналитика по GLN поставщиков."""
+    days = int(request.GET.get('days', 30))
+    since = timezone.now() - timedelta(days=days)
+
+    # Топ поставщиков по количеству
+    top_by_count = list(
+        EdiDocument.objects
+        .filter(received_at__gte=since)
+        .exclude(supplier_gln='')
+        .values('supplier_gln', 'supplier_name')
+        .annotate(
+            total=Count('id'),
+            orders=Count('id', filter=Q(doc_type='ORDER')),
+            invoices=Count('id', filter=Q(doc_type='INVOICE')),
+            desadv=Count('id', filter=Q(doc_type='DESADV')),
+        )
+        .order_by('-total')[:20]
+    )
+
+    # Динамика по дням для топ-5 поставщиков
+    top5_glns = [s['supplier_gln'] for s in top_by_count[:5]]
+    daily_by_supplier = {}
+    for gln in top5_glns:
+        name = next((s['supplier_name'] or gln for s in top_by_count if s['supplier_gln'] == gln), gln)
+        points = []
+        for i in range(min(days, 30) - 1, -1, -1):
+            day = date.today() - timedelta(days=i)
+            cnt = EdiDocument.objects.filter(
+                supplier_gln=gln, received_at__date=day
+            ).count()
+            points.append({'day': day.strftime('%d.%m'), 'count': cnt})
+        daily_by_supplier[name[:20]] = points
+
+    # Общие цифры за период
+    total_docs      = EdiDocument.objects.filter(received_at__gte=since).count()
+    unique_suppliers = EdiDocument.objects.filter(received_at__gte=since).exclude(supplier_gln='').values('supplier_gln').distinct().count()
+
+    return render(request, 'edi/suppliers.html', {
+        'days':              days,
+        'periods':           [7, 14, 30, 90],
+        'top_by_count':      top_by_count,
+        'total_docs':        total_docs,
+        'unique_suppliers':  unique_suppliers,
+        'avg_per_supplier':  round(total_docs / unique_suppliers, 1) if unique_suppliers else 0,
+        'daily_json':        json.dumps(daily_by_supplier),
+        'top5_glns':         top5_glns,
+    })
+
+
+# ═══════════════════════════════════════════════════════
+# Просмотр лог-файлов
+# ═══════════════════════════════════════════════════════
+
+def log_files(request):
+    """GET /log-files/ — просмотр файловых логов прямо в браузере."""
+    import os
+    from django.conf import settings as djset
+
+    logs_dir = getattr(djset, 'LOGS_DIR', djset.BASE_DIR / 'logs')
+    selected = request.GET.get('file', 'docrobot.log')
+    lines    = int(request.GET.get('lines', 200))
+
+    # Список доступных файлов
+    available = []
+    try:
+        for f in sorted(os.listdir(logs_dir)):
+            if f.endswith('.log'):
+                fpath = logs_dir / f
+                size  = os.path.getsize(fpath)
+                available.append({'name': f, 'size': size, 'size_kb': round(size / 1024, 1)})
+    except FileNotFoundError:
+        pass
+
+    content = ''
+    file_size = 0
+    if available:
+        # Проверяем что файл из разрешённого списка
+        valid_names = [f['name'] for f in available]
+        if selected not in valid_names and valid_names:
+            selected = valid_names[0]
+
+        fpath = logs_dir / selected
+        try:
+            file_size = os.path.getsize(fpath)
+            with open(fpath, 'r', encoding='utf-8', errors='replace') as f:
+                all_lines = f.readlines()
+            # Берём последние N строк
+            content = ''.join(all_lines[-lines:])
+        except FileNotFoundError:
+            content = '(файл пуст или не существует)'
+        except Exception as e:
+            content = f'Ошибка чтения: {e}'
+
+    return render(request, 'edi/log_files.html', {
+        'available':  available,
+        'selected':   selected,
+        'content':    content,
+        'lines':      lines,
+        'file_size':  round(file_size / 1024, 1),
+        'logs_dir':   str(logs_dir),
+    })

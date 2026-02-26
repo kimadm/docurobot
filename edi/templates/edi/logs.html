@@ -1,38 +1,52 @@
 {% extends 'edi/base.html' %}
 {% block title %}Логи — Docrobot EDI{% endblock %}
 {% block page_title %}Логи активности{% endblock %}
-{% block page_sub %}Все события системы{% endblock %}
+{% block page_sub %}Все события системы · {{ total }} записей{% endblock %}
+
+{% block topbar_actions %}
+<a href="?level={{ filter_level }}&action={{ filter_action }}&date_from={{ filter_date_from }}&date_to={{ filter_date_to }}&export=xlsx"
+   class="btn btn-secondary" style="background:#1D6F42;color:#fff;border-color:#1D6F42;">
+  📊 Экспорт Excel
+</a>
+{% endblock %}
 
 {% block content %}
 <div class="table-wrap">
   <div class="table-toolbar">
-    <form method="get" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <form method="get" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;width:100%">
       <select name="level" onchange="this.form.submit()">
         <option value="">Все уровни</option>
         {% for val, label in levels %}
         <option value="{{ val }}" {% if filter_level == val %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
       </select>
-      <input type="text" name="action" value="{{ filter_action }}" placeholder="Фильтр по действию..." style="width:200px" />
+      <input type="text" name="action" value="{{ filter_action }}" placeholder="Фильтр по действию..." style="width:180px"/>
+      <input type="date" name="date_from" value="{{ filter_date_from }}" title="С даты">
+      <input type="date" name="date_to"   value="{{ filter_date_to }}"   title="По дату">
       <button type="submit" class="btn btn-primary btn-sm">Найти</button>
       <a href="{% url 'logs' %}" class="btn btn-secondary btn-sm">Сброс</a>
+      <div style="flex:1"></div>
+      <span style="font-size:12px;color:var(--muted)">
+        {% if page_obj.has_other_pages %}{{ page_obj.start_index }}–{{ page_obj.end_index }} из {% endif %}
+        <strong>{{ total }}</strong>
+      </span>
     </form>
   </div>
   <table>
     <thead>
-      <tr><th>Время</th><th>Уровень</th><th>Действие</th><th>Сообщение</th><th>Документ</th></tr>
+      <tr><th style="width:140px">Время</th><th style="width:80px">Уровень</th><th style="width:160px">Действие</th><th>Сообщение</th><th style="width:140px">Документ</th></tr>
     </thead>
     <tbody>
       {% for log in logs %}
       <tr>
-        <td class="td-mono" style="white-space:nowrap;">{{ log.created_at|date:"d.m.Y H:i:s" }}</td>
+        <td class="td-mono" style="white-space:nowrap;font-size:11px">{{ log.created_at|date:"d.m.Y H:i:s" }}</td>
         <td><span class="badge badge-{% if log.level == 'error' %}error-lvl{% elif log.level == 'warn' %}warn{% else %}info{% endif %}">{{ log.get_level_display }}</span></td>
-        <td class="td-mono">{{ log.action }}</td>
-        <td style="font-size:12px;color:var(--text2);max-width:300px;">{{ log.message|truncatechars:100 }}</td>
+        <td class="td-mono" style="font-size:11px">{{ log.action }}</td>
+        <td style="font-size:12px;color:var(--text2);max-width:400px">{{ log.message|truncatechars:120 }}</td>
         <td>
           {% if log.document %}
-          <a href="{% url 'document_detail' log.document.pk %}" style="font-family:var(--mono);font-size:11px;color:var(--accent);">
-            {{ log.document.number|default:log.document.docrobot_id|truncatechars:16 }}
+          <a href="{% url 'document_detail' log.document.pk %}" style="font-family:var(--mono);font-size:11px;color:var(--accent)">
+            {{ log.document.number|default:log.document.docrobot_id|truncatechars:18 }}
           </a>
           {% else %}—{% endif %}
         </td>
@@ -43,4 +57,33 @@
     </tbody>
   </table>
 </div>
+
+{% if page_obj.has_other_pages %}
+<div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;font-size:13px">
+  <span style="color:var(--muted)">Страница {{ page_obj.number }} из {{ page_obj.paginator.num_pages }}</span>
+  <div style="display:flex;gap:4px">
+    {% if page_obj.has_previous %}
+    <a href="?page=1&level={{ filter_level }}&action={{ filter_action }}&date_from={{ filter_date_from }}&date_to={{ filter_date_to }}"
+       style="padding:5px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);text-decoration:none;font-size:12px">«</a>
+    <a href="?page={{ page_obj.previous_page_number }}&level={{ filter_level }}&action={{ filter_action }}&date_from={{ filter_date_from }}&date_to={{ filter_date_to }}"
+       style="padding:5px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);text-decoration:none;font-size:12px">‹</a>
+    {% endif %}
+    {% for num in page_obj.paginator.page_range %}
+      {% if page_obj.number == num %}
+        <span style="padding:5px 10px;background:var(--accent);border-radius:6px;color:#fff;font-size:12px;font-weight:700">{{ num }}</span>
+      {% elif num >= page_obj.number|add:"-2" and num <= page_obj.number|add:"2" %}
+        <a href="?page={{ num }}&level={{ filter_level }}&action={{ filter_action }}&date_from={{ filter_date_from }}&date_to={{ filter_date_to }}"
+           style="padding:5px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);text-decoration:none;font-size:12px">{{ num }}</a>
+      {% endif %}
+    {% endfor %}
+    {% if page_obj.has_next %}
+    <a href="?page={{ page_obj.next_page_number }}&level={{ filter_level }}&action={{ filter_action }}&date_from={{ filter_date_from }}&date_to={{ filter_date_to }}"
+       style="padding:5px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);text-decoration:none;font-size:12px">›</a>
+    <a href="?page={{ page_obj.paginator.num_pages }}&level={{ filter_level }}&action={{ filter_action }}&date_from={{ filter_date_from }}&date_to={{ filter_date_to }}"
+       style="padding:5px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);text-decoration:none;font-size:12px">»</a>
+    {% endif %}
+  </div>
+  <span style="color:var(--muted)">Всего: {{ total }}</span>
+</div>
+{% endif %}
 {% endblock %}

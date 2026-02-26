@@ -136,6 +136,40 @@ class ActivityLog(models.Model):
         return f'[{self.level.upper()}] {self.action}: {self.message[:60]}'
 
 
+class DocumentComment(models.Model):
+    """Комментарий/заметка к EDI-документу."""
+
+    IMPORTANCE_NORMAL = 'normal'
+    IMPORTANCE_WARN   = 'warn'
+    IMPORTANCE_URGENT = 'urgent'
+    IMPORTANCE_CHOICES = [
+        (IMPORTANCE_NORMAL, 'Обычный'),
+        (IMPORTANCE_WARN,   'Внимание'),
+        (IMPORTANCE_URGENT, 'Срочно'),
+    ]
+
+    document   = models.ForeignKey(
+        EdiDocument, on_delete=models.CASCADE,
+        related_name='comments', verbose_name='Документ',
+    )
+    text       = models.TextField(verbose_name='Текст комментария')
+    importance = models.CharField(
+        max_length=10, choices=IMPORTANCE_CHOICES,
+        default=IMPORTANCE_NORMAL, verbose_name='Важность',
+    )
+    author     = models.CharField(max_length=100, blank=True, default='', verbose_name='Автор')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Создан')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='Изменён')
+
+    class Meta:
+        verbose_name = 'Комментарий'
+        verbose_name_plural = 'Комментарии'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'Комментарий к {self.document} от {self.created_at:%d.%m.%Y}'
+
+
 class XmlTemplate(models.Model):
     """
     Шаблон XML для конкретного типа EDI-документа.
@@ -255,6 +289,8 @@ class ConnectionSettings(models.Model):
     docrobot_username = models.CharField(max_length=100, blank=True, verbose_name='Логин Docrobot')
     docrobot_password = models.CharField(max_length=255, blank=True, verbose_name='Пароль Docrobot')
     docrobot_poll_interval = models.IntegerField(default=60, verbose_name='Интервал опроса (сек)')
+    docrobot_gln  = models.CharField(max_length=13, blank=True, default='', verbose_name='GLN компании')
+    cleanup_days  = models.IntegerField(default=90, verbose_name='Хранить документы (дней, 0 = не удалять)')
 
     # ── 1С ────────────────────────────────────────────────
     onec_url      = models.CharField(
@@ -306,6 +342,8 @@ class ConnectionSettings(models.Model):
         django_settings.DOCROBOT_USERNAME      = self.docrobot_username
         django_settings.DOCROBOT_PASSWORD      = self.docrobot_password
         django_settings.DOCROBOT_POLL_INTERVAL = self.docrobot_poll_interval
+        if self.docrobot_gln:
+            django_settings.DOCROBOT_GLN = self.docrobot_gln
         django_settings.ONEC_URL               = self.onec_url
         django_settings.ONEC_USERNAME          = self.onec_username
         django_settings.ONEC_PASSWORD          = self.onec_password

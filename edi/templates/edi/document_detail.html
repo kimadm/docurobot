@@ -33,6 +33,54 @@
       </table>
     </div>
 
+    <!-- Позиции товаров -->
+    {% if positions %}
+    <div class="card">
+      <div class="flex-between mb16">
+        <div class="card-title" style="margin:0">📦 Товарные позиции <span style="font-size:12px;color:var(--muted);font-weight:400">({{ positions|length }} шт.)</span></div>
+        <div style="font-size:12px;color:var(--muted)">
+          Сумма: <strong style="color:var(--text)">{{ total_amount|default:"—" }}</strong>
+        </div>
+      </div>
+      <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead>
+          <tr style="background:var(--surface2)">
+            <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">#</th>
+            <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">EAN / Код</th>
+            <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Наименование</th>
+            <th style="padding:8px 10px;text-align:right;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Кол-во</th>
+            <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Ед.</th>
+            <th style="padding:8px 10px;text-align:right;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Цена</th>
+            <th style="padding:8px 10px;text-align:right;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Сумма с НДС</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for pos in positions %}
+          <tr style="{% cycle "" "background:var(--surface2)" %}">
+            <td style="padding:8px 10px;border-bottom:1px solid var(--border);color:var(--muted)">{{ forloop.counter }}</td>
+            <td style="padding:8px 10px;border-bottom:1px solid var(--border);font-family:monospace;font-size:11px">{{ pos.ean|default:"—" }}</td>
+            <td style="padding:8px 10px;border-bottom:1px solid var(--border);font-weight:500">{{ pos.name|default:"—" }}</td>
+            <td style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:right">{{ pos.qty|default:0 }}</td>
+            <td style="padding:8px 10px;border-bottom:1px solid var(--border);color:var(--muted)">{{ pos.unit|default:"шт" }}</td>
+            <td style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace">{{ pos.price|floatformat:2|default:"—" }}</td>
+            <td style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace;font-weight:600">{{ pos.sum_vat|floatformat:2|default:"—" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr style="background:rgba(59,130,246,.05)">
+            <td colspan="6" style="padding:10px;text-align:right;font-weight:700;font-size:13px">ИТОГО:</td>
+            <td style="padding:10px;text-align:right;font-weight:700;font-size:13px;font-family:monospace;color:var(--accent)">
+              {{ total_amount|floatformat:2|default:"—" }}
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+      </div>
+    </div>
+    {% endif %}
+
     <!-- XML-просмотр -->
     <div class="card">
       <div class="flex-between mb16">
@@ -94,6 +142,69 @@
       {% endif %}
     </div>
 
+    <!-- ── Комментарии ── -->
+    <div class="card" id="comments-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div class="card-title" style="margin:0">
+          💬 Комментарии
+          <span id="comment-count" style="font-size:12px;color:var(--muted);font-weight:400">
+            ({{ comments|length }})
+          </span>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="toggleCommentForm()">+ Добавить</button>
+      </div>
+
+      <!-- Форма добавления -->
+      <div id="comment-form" style="display:none;margin-bottom:14px;padding:14px;background:var(--surface2);border-radius:8px;border:1px solid var(--border)">
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <input type="text" id="comment-author" placeholder="Ваше имя (необязательно)"
+                 style="flex:1;padding:7px 10px;font-size:12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);outline:none">
+          <select id="comment-importance"
+                  style="padding:7px 10px;font-size:12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);outline:none">
+            <option value="normal">⚪ Обычный</option>
+            <option value="warn">🟡 Внимание</option>
+            <option value="urgent">🔴 Срочно</option>
+          </select>
+        </div>
+        <textarea id="comment-text" rows="3" placeholder="Текст комментария..."
+                  style="width:100%;padding:8px 10px;font-size:13px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);outline:none;resize:vertical;box-sizing:border-box"></textarea>
+        <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">
+          <button class="btn btn-secondary btn-sm" onclick="toggleCommentForm()">Отмена</button>
+          <button class="btn btn-primary btn-sm" onclick="submitComment({{ doc.pk }})">💾 Сохранить</button>
+        </div>
+      </div>
+
+      <!-- Список комментариев -->
+      <div id="comments-list">
+        {% for c in comments %}
+        <div class="comment-item" data-id="{{ c.pk }}"
+             style="padding:10px 12px;border-radius:8px;margin-bottom:8px;border-left:3px solid
+             {% if c.importance == 'urgent' %}#EF4444{% elif c.importance == 'warn' %}#F59E0B{% else %}var(--border){% endif %};
+             background:{% if c.importance == 'urgent' %}rgba(239,68,68,.06){% elif c.importance == 'warn' %}rgba(245,158,11,.06){% else %}var(--surface2){% endif %}">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:11px;font-weight:700;color:var(--text)">{{ c.author|default:"Оператор" }}</span>
+              <span style="font-size:10px;color:var(--muted)">{{ c.created_at|date:"d.m.Y H:i" }}</span>
+              {% if c.importance == 'urgent' %}
+              <span style="font-size:10px;background:#FEE2E2;color:#DC2626;padding:1px 6px;border-radius:4px;font-weight:700">🔴 СРОЧНО</span>
+              {% elif c.importance == 'warn' %}
+              <span style="font-size:10px;background:#FEF3C7;color:#D97706;padding:1px 6px;border-radius:4px;font-weight:700">🟡 ВНИМАНИЕ</span>
+              {% endif %}
+            </div>
+            <button onclick="deleteComment({{ c.pk }}, this)"
+                    style="background:none;border:none;cursor:pointer;font-size:14px;color:var(--muted);padding:2px 6px;border-radius:4px"
+                    title="Удалить">✕</button>
+          </div>
+          <div style="font-size:13px;color:var(--text);white-space:pre-wrap">{{ c.text }}</div>
+        </div>
+        {% empty %}
+        <div id="no-comments" style="color:var(--muted);font-size:13px;text-align:center;padding:20px 0">
+          Комментариев нет
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
     <!-- Логи документа -->
     <div class="card">
       <div class="card-title">История событий</div>
@@ -140,6 +251,97 @@ async function sendDoc(id, btn) {
       btn.textContent = '→ Отправить в 1С';
     }
   } catch(e) { toast('Сетевая ошибка', 'error'); btn.disabled = false; }
+}
+
+// ── Комментарии ──────────────────────────────────────
+function toggleCommentForm() {
+  const f = document.getElementById('comment-form');
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+  if (f.style.display === 'block') document.getElementById('comment-text').focus();
+}
+
+async function submitComment(docId) {
+  const text       = document.getElementById('comment-text').value.trim();
+  const author     = document.getElementById('comment-author').value.trim();
+  const importance = document.getElementById('comment-importance').value;
+  if (!text) { toast('Введите текст комментария', 'error'); return; }
+
+  const fd = new FormData();
+  fd.append('text', text); fd.append('author', author); fd.append('importance', importance);
+  fd.append('csrfmiddlewaretoken', getCookie('csrftoken'));
+
+  try {
+    const r = await fetch(`/api/comments/${docId}/add/`, {method:'POST', body: fd});
+    const d = await r.json();
+    if (d.ok) {
+      addCommentToDOM(d);
+      document.getElementById('comment-text').value = '';
+      toggleCommentForm();
+      toast('Комментарий добавлен', 'success');
+      const cnt = document.getElementById('comment-count');
+      if (cnt) {
+        const n = document.querySelectorAll('.comment-item').length;
+        cnt.textContent = `(${n})`;
+      }
+    } else {
+      toast(d.error || 'Ошибка', 'error');
+    }
+  } catch(e) { toast('Сетевая ошибка', 'error'); }
+}
+
+function addCommentToDOM(d) {
+  const noComments = document.getElementById('no-comments');
+  if (noComments) noComments.remove();
+
+  const BORDER = d.importance === 'urgent' ? '#EF4444' : d.importance === 'warn' ? '#F59E0B' : 'var(--border)';
+  const BG     = d.importance === 'urgent' ? 'rgba(239,68,68,.06)' : d.importance === 'warn' ? 'rgba(245,158,11,.06)' : 'var(--surface2)';
+  const BADGE  = d.importance === 'urgent'
+    ? '<span style="font-size:10px;background:#FEE2E2;color:#DC2626;padding:1px 6px;border-radius:4px;font-weight:700">🔴 СРОЧНО</span>'
+    : d.importance === 'warn'
+    ? '<span style="font-size:10px;background:#FEF3C7;color:#D97706;padding:1px 6px;border-radius:4px;font-weight:700">🟡 ВНИМАНИЕ</span>'
+    : '';
+
+  const el = document.createElement('div');
+  el.className = 'comment-item';
+  el.dataset.id = d.id;
+  el.style.cssText = `padding:10px 12px;border-radius:8px;margin-bottom:8px;border-left:3px solid ${BORDER};background:${BG}`;
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:11px;font-weight:700;color:var(--text)">${d.author || 'Оператор'}</span>
+        <span style="font-size:10px;color:var(--muted)">${d.created_at}</span>
+        ${BADGE}
+      </div>
+      <button onclick="deleteComment(${d.id}, this)"
+              style="background:none;border:none;cursor:pointer;font-size:14px;color:var(--muted);padding:2px 6px;border-radius:4px" title="Удалить">✕</button>
+    </div>
+    <div style="font-size:13px;color:var(--text);white-space:pre-wrap">${d.text.replace(/</g,'&lt;')}</div>`;
+
+  const list = document.getElementById('comments-list');
+  list.insertBefore(el, list.firstChild);
+}
+
+async function deleteComment(id, btn) {
+  if (!confirm('Удалить комментарий?')) return;
+  const fd = new FormData();
+  fd.append('csrfmiddlewaretoken', getCookie('csrftoken'));
+  try {
+    const r = await fetch(`/api/comments/${id}/delete/`, {method:'POST', body: fd});
+    const d = await r.json();
+    if (d.ok) {
+      btn.closest('.comment-item').remove();
+      const cnt = document.getElementById('comment-count');
+      if (cnt) {
+        const n = document.querySelectorAll('.comment-item').length;
+        cnt.textContent = `(${n})`;
+        if (n === 0) {
+          document.getElementById('comments-list').innerHTML =
+            '<div id="no-comments" style="color:var(--muted);font-size:13px;text-align:center;padding:20px 0">Комментариев нет</div>';
+        }
+      }
+      toast('Комментарий удалён', 'info');
+    }
+  } catch(e) { toast('Ошибка', 'error'); }
 }
 </script>
 

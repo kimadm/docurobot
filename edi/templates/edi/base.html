@@ -18,6 +18,7 @@
       --text:    #e2e8f0;
       --text2:   #94a3b8;
       --text3:   #4b6080;
+      --muted:   #94a3b8;
       --accent:  #3b82f6;
       --accent2: #10b981;
       --warn:    #f59e0b;
@@ -28,6 +29,33 @@
       --nav-w:   220px;
       --radius:  8px;
     }
+
+    /* ── Светлая тема ── */
+    html.light {
+      --bg:      #f1f5f9;
+      --surface: #ffffff;
+      --surface2:#f8fafc;
+      --surface3:#f1f5f9;
+      --border:  #e2e8f0;
+      --text:    #0f172a;
+      --text2:   #475569;
+      --text3:   #94a3b8;
+      --muted:   #64748b;
+      --accent:  #2563eb;
+      --accent2: #059669;
+      --warn:    #d97706;
+      --danger:  #dc2626;
+      --purple:  #7c3aed;
+    }
+
+    /* ── Переключатель темы ── */
+    .theme-toggle {
+      width: 36px; height: 36px; border-radius: 8px;
+      background: var(--surface2); border: 1px solid var(--border);
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      font-size: 16px; transition: background .15s; flex-shrink: 0;
+    }
+    .theme-toggle:hover { background: var(--surface3); }
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: var(--sans); background: var(--bg); color: var(--text); min-height: 100vh; display: flex; font-size: 14px; }
@@ -256,7 +284,25 @@
         </a>
       </div>
       <div class="nav-section">
+        <div class="nav-label">Экспорт</div>
+        <a href="{% url 'print_forms' %}" class="nav-item {% if 'print' in request.resolver_match.url_name %}active{% endif %}">
+          <span class="nav-icon">🖨️</span> Печатные формы
+        </a>
+      </div>
+      <div class="nav-section">
+        <div class="nav-label">Аналитика</div>
+        <a href="{% url 'suppliers' %}" class="nav-item {% if request.resolver_match.url_name == 'suppliers' %}active{% endif %}">
+          <span class="nav-icon">🏭</span> Поставщики
+        </a>
+        <a href="{% url 'log_files' %}" class="nav-item {% if request.resolver_match.url_name == 'log_files' %}active{% endif %}">
+          <span class="nav-icon">📋</span> Лог-файлы
+        </a>
+      </div>
+      <div class="nav-section">
         <div class="nav-label">Система</div>
+        <a href="{% url 'healthcheck' %}" class="nav-item {% if request.resolver_match.url_name == 'healthcheck' %}active{% endif %}">
+          <span class="nav-icon">🩺</span> Статус системы
+        </a>
         <a href="{% url 'connections' %}" class="nav-item {% if request.resolver_match.url_name == 'connections' %}active{% endif %}">
           <span class="nav-icon">🔌</span> Подключения
         </a>
@@ -279,6 +325,7 @@
         <div class="topbar-sub">{% block page_sub %}{% endblock %}</div>
       </div>
       <div class="topbar-right">
+        <button class="theme-toggle" id="themeToggle" title="Сменить тему" onclick="toggleTheme()">🌙</button>
         {% block topbar_actions %}{% endblock %}
       </div>
     </div>
@@ -323,6 +370,21 @@
       const v = document.cookie.match('(^|;) ?' + name + '=([^;]*)(;|$)');
       return v ? v[2] : null;
     }
+
+    // ── Тема ─────────────────────────────────────────
+    function applyTheme(theme) {
+      document.documentElement.classList.toggle('light', theme === 'light');
+      const btn = document.getElementById('themeToggle');
+      if (btn) btn.textContent = theme === 'light' ? '🌙' : '☀️';
+    }
+    function toggleTheme() {
+      const current = localStorage.getItem('theme') || 'dark';
+      const next    = current === 'dark' ? 'light' : 'dark';
+      localStorage.setItem('theme', next);
+      applyTheme(next);
+    }
+    // Применяем сохранённую тему сразу при загрузке
+    (function() { applyTheme(localStorage.getItem('theme') || 'dark'); })();
   </script>
   {% block extra_js %}{% endblock %}
 </body>

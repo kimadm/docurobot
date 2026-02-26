@@ -1,0 +1,253 @@
+{% extends 'edi/base.html' %}
+{% block title %}Заявочный лист — {{ report_date|date:"d.m.Y" }}{% endblock %}
+{% block page_title %}📋 Заявочный лист{% endblock %}
+{% block page_sub %}{{ report_date|date:"d.m.Y" }} · {{ doc_count }} заказов · {{ place_count }} точек · {{ row_count }} позиций{% endblock %}
+
+{% block topbar_actions %}
+<a href="?date={{ report_date|date:'Y-m-d' }}&export=xlsx"
+   class="btn btn-primary" style="text-decoration:none">⬇ Скачать Excel</a>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+  /* Фиксация первых 3 колонок при горизонтальном скролле */
+  .matrix-wrap { overflow-x: auto; }
+  .matrix-table { border-collapse: collapse; font-size: 12px; white-space: nowrap; }
+  .matrix-table th, .matrix-table td { border: 1px solid var(--border); }
+
+  .col-fixed-1 { position: sticky; left: 0;   z-index: 2; background: var(--surface); min-width: 110px; max-width: 130px; }
+  .col-fixed-2 { position: sticky; left: 130px; z-index: 2; background: var(--surface); min-width: 240px; max-width: 280px; }
+  .col-fixed-3 { position: sticky; left: 410px; z-index: 2; background: var(--surface); min-width: 80px; }
+
+  .matrix-table thead th.col-fixed-1,
+  .matrix-table thead th.col-fixed-2,
+  .matrix-table thead th.col-fixed-3 { z-index: 3; }
+
+  .th-place {
+    background: #2D4A7A !important;
+    color: #fff !important;
+    padding: 8px 10px;
+    text-align: center;
+    font-size: 10px;
+    font-weight: 600;
+    min-width: 80px;
+    max-width: 120px;
+    white-space: normal;
+    word-break: break-word;
+    vertical-align: middle;
+  }
+  .th-fixed {
+    background: var(--surface2) !important;
+    color: var(--muted) !important;
+    padding: 8px 10px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+  }
+  .th-itogo {
+    background: #1E3A5F !important;
+    color: #fff !important;
+    padding: 8px 10px;
+    text-align: center;
+    font-size: 10px;
+    font-weight: 700;
+    min-width: 70px;
+  }
+
+  .td-article { font-family: monospace; font-size: 11px; color: var(--muted); padding: 7px 10px; text-align: center; }
+  .td-name    { padding: 7px 10px; font-weight: 500; white-space: normal; word-break: break-word; max-width: 280px; }
+  .td-unit    { padding: 7px 10px; text-align: center; color: var(--muted); font-size: 11px; }
+  .td-qty     { padding: 7px 10px; text-align: center; font-family: monospace; }
+  .td-zero    { color: var(--border); }
+  .td-total-row { padding: 7px 10px; text-align: center; font-family: monospace; font-weight: 700; color: var(--accent); }
+
+  .tr-alt td { background: var(--surface2) !important; }
+  .tr-alt .col-fixed-1,
+  .tr-alt .col-fixed-2,
+  .tr-alt .col-fixed-3 { background: var(--surface2) !important; }
+
+  .tr-footer td {
+    background: rgba(37,99,235,.1) !important;
+    font-weight: 700; color: var(--accent);
+    font-family: monospace; text-align: center;
+    padding: 10px;
+    font-size: 13px;
+  }
+  .tr-footer .col-fixed-1,
+  .tr-footer .col-fixed-2,
+  .tr-footer .col-fixed-3 { background: rgba(37,99,235,.1) !important; }
+
+  /* Скрытые строки при поиске */
+  .row-hidden { display: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div style="display:flex;flex-direction:column;gap:16px">
+
+  <!-- Выбор даты -->
+  <div class="card" style="padding:14px 20px">
+    <form method="get" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <label style="font-size:13px;font-weight:600;color:var(--muted)">Дата:</label>
+      <input type="date" name="date" value="{{ report_date|date:'Y-m-d' }}"
+             style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;
+                    background:var(--surface2);color:var(--text);font-size:13px">
+      <button type="submit" class="btn btn-secondary btn-sm">Показать</button>
+      <a href="?" class="btn btn-secondary btn-sm">Последний день</a>
+      <div style="margin-left:auto;display:flex;gap:6px">
+        <a href="?date={{ prev_date }}" class="btn btn-secondary btn-sm">← Пред.</a>
+        <a href="?date={{ next_date }}" class="btn btn-secondary btn-sm">След. →</a>
+      </div>
+    </form>
+  </div>
+
+  <!-- Переключатель отчётов -->
+  <div style="display:flex;gap:2px;background:var(--surface2);border:1px solid var(--border);
+              border-radius:8px;padding:4px;width:fit-content">
+    <a href="{% url 'daily_report' %}?date={{ report_date|date:'Y-m-d' }}"
+       style="padding:7px 18px;border-radius:6px;font-size:12px;font-weight:600;
+              text-decoration:none;background:var(--accent);color:#fff">
+      📊 Матрица
+    </a>
+    <a href="{% url 'daily_report_grouped' %}?date={{ report_date|date:'Y-m-d' }}"
+       style="padding:7px 18px;border-radius:6px;font-size:12px;font-weight:600;
+              text-decoration:none;color:var(--muted)">
+      📍 По точкам
+    </a>
+  </div>
+
+  {% if rows %}
+
+  <!-- Сводка -->
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+    <div class="card" style="text-align:center;padding:14px">
+      <div style="font-size:26px;font-weight:700;color:var(--accent)">{{ doc_count }}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:3px">Заказов</div>
+    </div>
+    <div class="card" style="text-align:center;padding:14px">
+      <div style="font-size:26px;font-weight:700;color:var(--accent)">{{ place_count }}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:3px">Точек доставки</div>
+    </div>
+    <div class="card" style="text-align:center;padding:14px">
+      <div style="font-size:26px;font-weight:700;color:var(--accent)" id="vis-rows">{{ row_count }}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:3px">Позиций</div>
+    </div>
+    <div class="card" style="text-align:center;padding:14px">
+      <div style="font-size:22px;font-weight:700;color:var(--accent)" id="vis-total">{{ grand_total|floatformat:0 }}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:3px">Единиц всего</div>
+    </div>
+  </div>
+
+  <!-- Таблица -->
+  <div class="card" style="padding:0;overflow:hidden">
+
+    <div style="padding:12px 18px;border-bottom:1px solid var(--border);
+                display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <span class="card-title" style="margin:0">Матрица заказов</span>
+      <input type="text" id="q" placeholder="🔍 Поиск по названию или артикулу…"
+             oninput="filterRows()"
+             style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;
+                    background:var(--surface2);color:var(--text);font-size:12px;width:280px">
+      <span style="font-size:11px;color:var(--muted)">
+        ← Прокрутите таблицу по горизонтали
+      </span>
+    </div>
+
+    <div class="matrix-wrap">
+      <table class="matrix-table" id="matrix">
+        <thead>
+          <tr>
+            <th class="th-fixed col-fixed-1">Артикул</th>
+            <th class="th-fixed col-fixed-2" style="text-align:left">Наименование продукта</th>
+            <th class="th-fixed col-fixed-3">Кратность</th>
+            {% for place in place_list %}
+            <th class="th-place">{{ place }}</th>
+            {% endfor %}
+            <th class="th-itogo">ИТОГО</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          {% for row in rows %}
+          <tr class="data-row {% cycle '' 'tr-alt' %}"
+              data-article="{{ row.article|lower }}"
+              data-name="{{ row.name|lower }}"
+              data-total="{{ row.total_qty }}">
+            <td class="td-article col-fixed-1">{{ row.article|default:"—" }}</td>
+            <td class="td-name col-fixed-2">{{ row.name|default:"—" }}</td>
+            <td class="td-unit col-fixed-3">{{ row.unit|default:"" }}</td>
+            {% for qty in row.qtys %}
+            <td class="td-qty {% if qty == 0 %}td-zero{% endif %}">
+              {% if qty %}{{ qty|floatformat:0 }}{% endif %}
+            </td>
+            {% endfor %}
+            <td class="td-total-row">{{ row.total_qty|floatformat:0 }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr class="tr-footer">
+            <td class="col-fixed-1" style="text-align:right;font-size:12px">ИТОГО</td>
+            <td class="col-fixed-2"></td>
+            <td class="col-fixed-3"></td>
+            {% for total in col_totals %}
+            <td id="ct-{{ forloop.counter0 }}">{{ total|floatformat:0 }}</td>
+            {% endfor %}
+            <td id="grand-total">{{ grand_total|floatformat:0 }}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+
+  {% else %}
+  <div class="card">
+    <div class="empty">
+      <div class="empty-icon">📭</div>
+      <p>Нет заказов за {{ report_date|date:"d.m.Y" }}</p>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+
+<script>
+// Исходные данные колонок для пересчёта
+var colCount = {{ place_count }};
+
+function filterRows() {
+  var q    = document.getElementById('q').value.toLowerCase().trim();
+  var rows = document.querySelectorAll('tr.data-row');
+  var colSums   = new Array(colCount).fill(0);
+  var grandSum  = 0;
+  var visCount  = 0;
+
+  rows.forEach(function(row) {
+    var show = !q || row.dataset.name.includes(q) || row.dataset.article.includes(q);
+    row.classList.toggle('row-hidden', !show);
+    if (show) {
+      visCount++;
+      grandSum += parseFloat(row.dataset.total) || 0;
+      var cells = row.querySelectorAll('td.td-qty');
+      cells.forEach(function(cell, i) {
+        colSums[i] += parseFloat(cell.textContent) || 0;
+      });
+    }
+  });
+
+  // Обновляем итоговую строку
+  for (var i = 0; i < colCount; i++) {
+    var el = document.getElementById('ct-' + i);
+    if (el) el.textContent = colSums[i] ? Math.round(colSums[i]).toLocaleString('ru-RU') : '';
+  }
+  var gt = document.getElementById('grand-total');
+  if (gt) gt.textContent = Math.round(grandSum).toLocaleString('ru-RU');
+
+  var vt = document.getElementById('vis-total');
+  if (vt) vt.textContent = Math.round(grandSum).toLocaleString('ru-RU');
+
+  var vr = document.getElementById('vis-rows');
+  if (vr) vr.textContent = visCount;
+}
+</script>
+{% endblock %}

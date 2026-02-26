@@ -27,11 +27,11 @@ class Command(BaseCommand):
         # Выбираем документы
         qs = EdiDocument.objects.filter(doc_type='ORDER').order_by('-received_at')
         if not options['all']:
-            # Только без позиций
+            # Без позиций ИЛИ без места доставки
             docs_to_update = []
             for doc in qs:
                 raw = doc.raw_json or {}
-                if not raw.get('positions'):
+                if not raw.get('positions') or not raw.get('delivery_place_name'):
                     docs_to_update.append(doc)
         else:
             docs_to_update = list(qs)

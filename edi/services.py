@@ -243,6 +243,7 @@ class DocrobotClient:
                 raw.get('docDate') or ''
             )
 
+            dp_info = head.get('DELIVERYPLACE_INFO', {}) or {}
             return {
                 'docrobotId':    doc_id,
                 'docType':       doc_type,
@@ -256,6 +257,8 @@ class DocrobotClient:
                 'totalAmount':   float(inner.get('AMOUNTWITHVAT', inner.get('AMOUNT', 0)) or 0),
                 'positions':     positions,
                 'raw':           raw,
+                'delivery_place_name': dp_info.get('названиеТочки') or dp_info.get('полноеНазвание') or '',
+                'delivery_place_addr': dp_info.get('Адрес') or '',
             }
         except Exception as e:
             logger.error(f'Ошибка нормализации документа: {e}')

@@ -130,10 +130,58 @@ def document_detail(request, pk):
         except Exception:
             pass
 
+    # Передаём позиции явно — Django шаблон иногда не читает вложенные JSONField ключи
+    raw = doc.raw_json or {}
+    positions = raw.get('positions') or []
+
     return render(request, 'edi/document_detail.html', {
         'doc': doc, 'queue': queue, 'logs': logs, 'comments': comments,
         'importance_choices': DocumentComment.IMPORTANCE_CHOICES,
+        'positions': positions,
+        'positions_json': json.dumps(positions, ensure_ascii=False),
+        'total_amount': raw.get('totalAmount', ''),
     })
+
+
+
+@require_POST
+def api_refresh_document(request, pk):
+    """POST /api/refresh/<pk>/ — перезапросить документ из Docrobot и обновить raw_json."""
+    doc = get_object_or_404(EdiDocument, pk=pk)
+    try:
+        client = DocrobotClient()
+        raw = doc.raw_json or {}
+        doc_id  = raw.get('docrobotId') or doc.docrobot_id
+        flow_id = (raw.get('raw') or {}).get('docflowId', '')
+
+        content = client._fetch_content(doc.doc_type, doc_id, flow_id)
+        if not content:
+            return JsonResponse({'ok': False, 'error': 'Docrobot не вернул содержимое документа'})
+
+        normalized = client.normalize_document(content, doc.doc_type)
+        if not normalized:
+            return JsonResponse({'ok': False, 'error': 'Не удалось нормализовать документ'})
+
+        doc.raw_json      = normalized
+        doc.number        = normalized.get('number') or doc.number
+        doc.doc_date      = normalized.get('date') or doc.doc_date
+        doc.supplier_gln  = normalized.get('supplierGln') or doc.supplier_gln
+        doc.buyer_gln     = normalized.get('buyerGln') or doc.buyer_gln
+        doc.supplier_name = normalized.get('supplierName') or doc.supplier_name
+        doc.buyer_name    = normalized.get('buyerName') or doc.buyer_name
+        doc.save()
+
+        positions_count = len(normalized.get('positions') or [])
+        logger.info(f'Документ {doc} обновлён из Docrobot: {positions_count} позиций')
+        ActivityLog.objects.create(
+            level='info', action='doc_refreshed',
+            message=f'Документ {doc} обновлён из Docrobot: {positions_count} позиций',
+            document=doc,
+        )
+        return JsonResponse({'ok': True, 'positions': positions_count})
+    except Exception as e:
+        logger.error(f'Ошибка обновления документа {pk}: {e}', exc_info=True)
+        return JsonResponse({'ok': False, 'error': str(e)})
 
 
 def api_comment_add(request, pk):
@@ -1219,3 +1267,480 @@ def log_files(request):
         'file_size':  round(file_size / 1024, 1),
         'logs_dir':   str(logs_dir),
     })
+
+
+# ═══════════════════════════════════════════════════════
+# Ежедневный отчёт по позициям
+# ═══════════════════════════════════════════════════════
+
+
+
+
+
+def _get_report_date(request, almaty_tz):
+    """Хелпер: определяет дату отчёта из GET-параметра или последнего документа."""
+    from datetime import date
+    from zoneinfo import ZoneInfo
+    today = timezone.now().astimezone(almaty_tz).date()
+    ds = request.GET.get('date', '')
+    if not ds:
+        last = EdiDocument.objects.filter(doc_type='ORDER').order_by('-received_at').first()
+        return last.received_at.astimezone(almaty_tz).date() if last else today
+    try:
+        return date.fromisoformat(ds)
+    except ValueError:
+        return today
+
+
+def _get_docs_for_date(report_date, almaty_tz):
+    """Хелпер: возвращает queryset ORDER-документов за указанный день."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    utc_tz = ZoneInfo('UTC')
+    start_utc = datetime(report_date.year, report_date.month, report_date.day,
+                         0, 0, 0, tzinfo=almaty_tz).astimezone(utc_tz)
+    end_utc   = datetime(report_date.year, report_date.month, report_date.day,
+                         23, 59, 59, tzinfo=almaty_tz).astimezone(utc_tz)
+    return EdiDocument.objects.filter(
+        doc_type='ORDER',
+        received_at__gte=start_utc,
+        received_at__lte=end_utc,
+    ).exclude(raw_json__isnull=True).order_by('received_at')
+
+
+def daily_report(request):
+    """GET /daily-report/ — матричный отчёт: строки=товары, колонки=точки доставки."""
+    from zoneinfo import ZoneInfo
+    from datetime import timedelta
+    from collections import defaultdict, OrderedDict
+
+    almaty_tz   = ZoneInfo('Asia/Almaty')
+    report_date = _get_report_date(request, almaty_tz)
+    docs        = _get_docs_for_date(report_date, almaty_tz)
+
+    places = OrderedDict()
+    items  = OrderedDict()
+
+    for doc in docs:
+        raw        = doc.raw_json or {}
+        place_name = raw.get('delivery_place_name') or 'Место не указано'
+        place_addr = raw.get('delivery_place_addr') or ''
+        if place_name not in places:
+            places[place_name] = place_addr
+
+        for pos in raw.get('positions', []):
+            ean = pos.get('ean', '')
+            if not ean:
+                continue
+            if ean not in items:
+                items[ean] = {
+                    'article':      pos.get('article_buyer') or ean,
+                    'name':         pos.get('name', ''),
+                    'unit':         pos.get('unit', ''),
+                    'qty_by_place': defaultdict(float),
+                }
+            items[ean]['qty_by_place'][place_name] += float(pos.get('qty', 0))
+
+    place_list  = sorted(places.keys())
+    item_list   = sorted(items.values(), key=lambda r: r['name'])
+
+    rows        = []
+    col_totals  = defaultdict(float)
+    grand_total = 0.0
+
+    for item in item_list:
+        qtys      = []
+        row_total = 0.0
+        for place in place_list:
+            q = item['qty_by_place'].get(place, 0.0)
+            qtys.append(q)
+            row_total          += q
+            col_totals[place]  += q
+        grand_total += row_total
+        rows.append({
+            'article':   item['article'],
+            'name':      item['name'],
+            'unit':      item['unit'],
+            'qtys':      qtys,
+            'total_qty': row_total,
+        })
+
+    col_totals_list = [col_totals[p] for p in place_list]
+
+    if request.GET.get('export') == 'xlsx':
+        return _daily_report_xlsx(report_date, place_list, rows, col_totals_list, grand_total)
+
+    return render(request, 'edi/daily_report.html', {
+        'report_date':  report_date,
+        'prev_date':    (report_date - timedelta(days=1)).strftime('%Y-%m-%d'),
+        'next_date':    (report_date + timedelta(days=1)).strftime('%Y-%m-%d'),
+        'place_list':   place_list,
+        'rows':         rows,
+        'col_totals':   col_totals_list,
+        'grand_total':  grand_total,
+        'doc_count':    docs.count(),
+        'place_count':  len(place_list),
+        'row_count':    len(rows),
+    })
+
+
+def daily_report_grouped(request):
+    """GET /daily-report/grouped/ — отчёт сгруппированный по точке доставки."""
+    from zoneinfo import ZoneInfo
+    from datetime import timedelta
+    from collections import defaultdict, OrderedDict
+
+    almaty_tz   = ZoneInfo('Asia/Almaty')
+    report_date = _get_report_date(request, almaty_tz)
+    docs        = _get_docs_for_date(report_date, almaty_tz)
+
+    groups = OrderedDict()
+
+    for doc in docs:
+        raw        = doc.raw_json or {}
+        place_name = raw.get('delivery_place_name') or 'Место не указано'
+        place_addr = raw.get('delivery_place_addr') or ''
+        place_key  = (place_name, place_addr)
+
+        if place_key not in groups:
+            groups[place_key] = defaultdict(lambda: {
+                'article': '', 'name': '', 'qty': 0.0, 'amount': 0.0,
+            })
+
+        for pos in raw.get('positions', []):
+            ean = pos.get('ean', '')
+            if not ean:
+                continue
+            g = groups[place_key][ean]
+            g['article']  = pos.get('article_buyer') or pos.get('ean', '')
+            g['name']     = pos.get('name', '')
+            qty_val       = float(pos.get('qty') or 0)
+            g['qty']     += qty_val
+            price_vat     = float(pos.get('sum_vat') or pos.get('price_vat') or 0)
+            g['amount']  += price_vat * qty_val
+
+    place_groups = []
+    total_qty    = 0.0
+    total_amount = 0.0
+
+    for (place_name, place_addr), items in groups.items():
+        rows       = sorted(items.values(), key=lambda r: r['name'])
+        sub_qty    = sum(r['qty']    for r in rows)
+        sub_amount = sum(r['amount'] for r in rows)
+        total_qty    += sub_qty
+        total_amount += sub_amount
+        place_groups.append({
+            'place_name':      place_name,
+            'place_addr':      place_addr,
+            'rows':            rows,
+            'subtotal_qty':    sub_qty,
+            'subtotal_amount': sub_amount,
+        })
+
+    place_groups.sort(key=lambda g: g['place_name'])
+
+    if request.GET.get('export') == 'xlsx':
+        return _daily_report_grouped_xlsx(report_date, place_groups, total_qty, total_amount)
+
+    return render(request, 'edi/daily_report_grouped.html', {
+        'report_date':  report_date,
+        'prev_date':    (report_date - timedelta(days=1)).strftime('%Y-%m-%d'),
+        'next_date':    (report_date + timedelta(days=1)).strftime('%Y-%m-%d'),
+        'place_groups': place_groups,
+        'total_amount': total_amount,
+        'total_qty':    total_qty,
+        'doc_count':    docs.count(),
+        'place_count':  len(place_groups),
+    })
+
+def _daily_report_xlsx(report_date, place_list, rows, col_totals, grand_total):
+    """Excel матричный отчёт: строки=товары, колонки=точки доставки."""
+    import openpyxl, io
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    from datetime import date
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'Отчёт'
+    ws.sheet_view.showGridLines = False
+
+    def thin_border():
+        s = Side(style='thin', color='D1D5DB')
+        return Border(left=s, right=s, top=s, bottom=s)
+
+    thin = thin_border()
+
+    C_HDR   = '1E3A5F'
+    C_PLACE = '2D4A7A'
+    C_ALT   = 'F0F4FA'
+    C_TOTAL = 'DBEAFE'
+    C_BLUE  = '2563EB'
+    C_ZERO  = 'CBD5E1'
+
+    # ── Заголовок документа ──
+    ncols = 3 + len(place_list) + 1  # Артикул + Наим. + Крат. + точки + ИТОГО
+    last_col = get_column_letter(ncols)
+
+    ws.merge_cells(f'A1:{last_col}1')
+    ws['A1'] = f'Заявочный лист — {report_date.strftime("%d.%m.%Y")}'
+    ws['A1'].font      = Font(name='Arial', bold=True, size=14, color=C_HDR)
+    ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
+    ws.row_dimensions[1].height = 28
+
+    ws.merge_cells(f'A2:{last_col}2')
+    ws['A2'] = f'Сформирован: {date.today().strftime("%d.%m.%Y")}   |   Точек: {len(place_list)}   |   Позиций: {len(rows)}'
+    ws['A2'].font      = Font(name='Arial', size=10, color='6B7280')
+    ws['A2'].alignment = Alignment(horizontal='center')
+    ws.row_dimensions[2].height = 16
+
+    # ── Шапка: фиксированные колонки ──
+    HFILL  = PatternFill('solid', fgColor=C_HDR)
+    HFONT  = Font(name='Arial', bold=True, color='FFFFFF', size=9)
+    HALIGN_C = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    HALIGN_L = Alignment(horizontal='left',   vertical='center', wrap_text=True)
+
+    fixed = [('Артикул', 14), ('Наименование продукта', 46), ('Кратность', 10)]
+    for col, (title, width) in enumerate(fixed, 1):
+        c = ws.cell(row=4, column=col, value=title)
+        c.fill = HFILL; c.font = HFONT
+        c.alignment = HALIGN_L if col == 2 else HALIGN_C
+        c.border = thin
+        ws.column_dimensions[get_column_letter(col)].width = width
+
+    # ── Шапка: точки доставки ──
+    PFILL = PatternFill('solid', fgColor=C_PLACE)
+    for i, place in enumerate(place_list):
+        col = 4 + i
+        c = ws.cell(row=4, column=col, value=place)
+        c.fill = PFILL; c.font = HFONT
+        c.alignment = HALIGN_C; c.border = thin
+        ws.column_dimensions[get_column_letter(col)].width = 12
+
+    # ── Шапка: ИТОГО ──
+    itogo_col = 4 + len(place_list)
+    c = ws.cell(row=4, column=itogo_col, value='ИТОГО')
+    c.fill = HFILL; c.font = HFONT
+    c.alignment = HALIGN_C; c.border = thin
+    ws.column_dimensions[get_column_letter(itogo_col)].width = 10
+    ws.row_dimensions[4].height = 36
+
+    # ── Данные ──
+    DFONT  = Font(name='Arial', size=9)
+    ZFONT  = Font(name='Arial', size=9, color=C_ZERO)  # ноль — серый
+    TFONT  = Font(name='Arial', bold=True, size=9)
+    ALTF   = PatternFill('solid', fgColor=C_ALT)
+    A_C    = Alignment(horizontal='center', vertical='center')
+    A_L    = Alignment(horizontal='left',   vertical='center', wrap_text=True)
+    A_R    = Alignment(horizontal='right',  vertical='center')
+
+    for i, row in enumerate(rows):
+        r    = i + 5
+        fill = ALTF if i % 2 == 1 else None
+
+        # Артикул
+        c = ws.cell(row=r, column=1, value=row['article'])
+        c.font = DFONT; c.alignment = A_C; c.border = thin
+        if fill: c.fill = fill
+
+        # Наименование
+        c = ws.cell(row=r, column=2, value=row['name'])
+        c.font = DFONT; c.alignment = A_L; c.border = thin
+        if fill: c.fill = fill
+
+        # Кратность
+        c = ws.cell(row=r, column=3, value=row['unit'])
+        c.font = DFONT; c.alignment = A_C; c.border = thin
+        if fill: c.fill = fill
+
+        # Количество по точкам
+        for j, qty in enumerate(row['qtys']):
+            c = ws.cell(row=r, column=4+j, value=qty if qty else None)
+            c.font = ZFONT if not qty else DFONT
+            c.alignment = A_C; c.border = thin
+            c.number_format = '#,##0.###'
+            if fill: c.fill = fill
+
+        # ИТОГО по строке
+        c = ws.cell(row=r, column=itogo_col, value=row['total_qty'])
+        c.font = TFONT; c.alignment = A_C; c.border = thin
+        c.number_format = '#,##0.###'
+        if fill: c.fill = fill
+
+        ws.row_dimensions[r].height = 15
+
+    # ── Итоговая строка ──
+    tr    = len(rows) + 5
+    TFILL = PatternFill('solid', fgColor=C_TOTAL)
+    TBFONT= Font(name='Arial', bold=True, size=10, color=C_BLUE)
+
+    ws.merge_cells(f'A{tr}:C{tr}')
+    ws[f'A{tr}'] = 'ИТОГО'
+    ws[f'A{tr}'].font = TBFONT; ws[f'A{tr}'].fill = TFILL
+    ws[f'A{tr}'].alignment = Alignment(horizontal='right', vertical='center')
+    ws[f'A{tr}'].border = thin
+    for col in ('B', 'C'):
+        ws[f'{col}{tr}'].fill = TFILL; ws[f'{col}{tr}'].border = thin
+
+    for j, total in enumerate(col_totals):
+        c = ws.cell(row=tr, column=4+j, value=total)
+        c.font = TBFONT; c.fill = TFILL; c.border = thin
+        c.alignment = A_C; c.number_format = '#,##0.###'
+
+    c = ws.cell(row=tr, column=itogo_col, value=grand_total)
+    c.font = TBFONT; c.fill = TFILL; c.border = thin
+    c.alignment = A_C; c.number_format = '#,##0.###'
+    ws.row_dimensions[tr].height = 20
+
+    ws.freeze_panes = 'D5'  # фиксируем первые 3 колонки и шапку
+
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    fname = f'order_report_{report_date.strftime("%Y%m%d")}.xlsx'
+    from django.http import HttpResponse
+    resp = HttpResponse(buf.read(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp['Content-Disposition'] = f'attachment; filename="{fname}"'
+    return resp
+
+
+
+def _daily_report_grouped_xlsx(report_date, place_groups, total_qty, total_amount):
+    """Excel-экспорт сгруппированного отчёта по точкам доставки."""
+    import openpyxl, io
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    from datetime import date
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'По точкам'
+    ws.sheet_view.showGridLines = False
+
+    def thin_border():
+        s = Side(style='thin', color='D1D5DB')
+        return Border(left=s, right=s, top=s, bottom=s)
+    thin = thin_border()
+
+    COL_DEFS = [
+        ('Артикул',               16, Alignment(horizontal='center', vertical='center')),
+        ('Наименование продукта', 52, Alignment(horizontal='left',   vertical='center', wrap_text=True)),
+        ('Кол-во',                14, Alignment(horizontal='center', vertical='center')),
+        ('Сумма с НДС, ₸',        22, Alignment(horizontal='right',  vertical='center')),
+    ]
+
+    HFILL = PatternFill('solid', fgColor='1E3A5F')
+    HFONT = Font(name='Arial', bold=True, color='FFFFFF', size=10)
+    PFILL = PatternFill('solid', fgColor='2D4A7A')
+    SFILL = PatternFill('solid', fgColor='E8F0FE')
+    SFONT = Font(name='Arial', bold=True, size=9, color='2563EB')
+    TFILL = PatternFill('solid', fgColor='DBEAFE')
+    TFONT = Font(name='Arial', bold=True, size=11, color='2563EB')
+    DFONT = Font(name='Arial', size=9)
+    ALTF  = PatternFill('solid', fgColor='F0F4FA')
+
+    # Заголовок
+    ws.merge_cells('A1:D1')
+    ws['A1'] = f'Отчёт по точкам доставки — {report_date.strftime("%d.%m.%Y")}'
+    ws['A1'].font      = Font(name='Arial', bold=True, size=14, color='1E3A5F')
+    ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
+    ws.row_dimensions[1].height = 28
+
+    ws.merge_cells('A2:D2')
+    total_pos = sum(len(g['rows']) for g in place_groups)
+    ws['A2'] = f'Сформирован: {date.today().strftime("%d.%m.%Y")}   |   Точек: {len(place_groups)}   |   Позиций: {total_pos}'
+    ws['A2'].font      = Font(name='Arial', size=10, color='6B7280')
+    ws['A2'].alignment = Alignment(horizontal='center')
+    ws.row_dimensions[2].height = 16
+
+    # Шапка колонок
+    for col, (title, width, align) in enumerate(COL_DEFS, 1):
+        c = ws.cell(row=4, column=col, value=title)
+        c.fill = HFILL; c.font = HFONT
+        c.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        c.border = thin
+        ws.column_dimensions[get_column_letter(col)].width = width
+    ws.row_dimensions[4].height = 22
+
+    row_n = 5
+    for group in place_groups:
+        # Заголовок группы
+        ws.merge_cells(f'A{row_n}:D{row_n}')
+        label = group['place_name']
+        if group['place_addr']:
+            label += f'  |  {group["place_addr"]}'
+        ws[f'A{row_n}'] = label
+        ws[f'A{row_n}'].fill      = PFILL
+        ws[f'A{row_n}'].font      = Font(name='Arial', bold=True, color='FFFFFF', size=10)
+        ws[f'A{row_n}'].alignment = Alignment(horizontal='left', vertical='center')
+        ws[f'A{row_n}'].border    = thin
+        for col in range(2, 5):
+            ws.cell(row=row_n, column=col).fill   = PFILL
+            ws.cell(row=row_n, column=col).border = thin
+        ws.row_dimensions[row_n].height = 18
+        row_n += 1
+
+        # Товары
+        for i, pos in enumerate(group['rows']):
+            fill = ALTF if i % 2 == 1 else None
+            for col, (val, fmt, (_, _, align)) in enumerate(zip(
+                [pos['article'], pos['name'], pos['qty'], pos['amount']],
+                [None, None, '#,##0.###', '#,##0.00'],
+                COL_DEFS
+            ), 1):
+                c = ws.cell(row=row_n, column=col, value=val)
+                c.font = DFONT; c.alignment = align; c.border = thin
+                if fill:  c.fill = fill
+                if fmt:   c.number_format = fmt
+            ws.row_dimensions[row_n].height = 15
+            row_n += 1
+
+        # Итог группы
+        ws.merge_cells(f'A{row_n}:B{row_n}')
+        ws[f'A{row_n}'] = f'Итого: {group["place_name"]}'
+        ws[f'A{row_n}'].font      = SFONT
+        ws[f'A{row_n}'].fill      = SFILL
+        ws[f'A{row_n}'].alignment = Alignment(horizontal='right', vertical='center')
+        ws[f'A{row_n}'].border    = thin
+        ws[f'B{row_n}'].fill = SFILL; ws[f'B{row_n}'].border = thin
+
+        ws[f'C{row_n}'] = group['subtotal_qty']
+        ws[f'C{row_n}'].font = SFONT; ws[f'C{row_n}'].fill = SFILL; ws[f'C{row_n}'].border = thin
+        ws[f'C{row_n}'].number_format = '#,##0.###'
+        ws[f'C{row_n}'].alignment = Alignment(horizontal='center', vertical='center')
+
+        ws[f'D{row_n}'] = group['subtotal_amount']
+        ws[f'D{row_n}'].font = SFONT; ws[f'D{row_n}'].fill = SFILL; ws[f'D{row_n}'].border = thin
+        ws[f'D{row_n}'].number_format = '#,##0.00'
+        ws[f'D{row_n}'].alignment = Alignment(horizontal='right', vertical='center')
+        ws.row_dimensions[row_n].height = 16
+        row_n += 2
+
+    # Итого по отчёту
+    ws.merge_cells(f'A{row_n}:B{row_n}')
+    ws[f'A{row_n}'] = 'ИТОГО ПО ОТЧЁТУ'
+    ws[f'A{row_n}'].font = TFONT; ws[f'A{row_n}'].fill = TFILL
+    ws[f'A{row_n}'].alignment = Alignment(horizontal='right', vertical='center')
+    ws[f'A{row_n}'].border = thin
+    ws[f'B{row_n}'].fill = TFILL; ws[f'B{row_n}'].border = thin
+
+    ws[f'C{row_n}'] = total_qty
+    ws[f'C{row_n}'].font = TFONT; ws[f'C{row_n}'].fill = TFILL; ws[f'C{row_n}'].border = thin
+    ws[f'C{row_n}'].number_format = '#,##0.###'
+    ws[f'C{row_n}'].alignment = Alignment(horizontal='center', vertical='center')
+
+    ws[f'D{row_n}'] = total_amount
+    ws[f'D{row_n}'].font = TFONT; ws[f'D{row_n}'].fill = TFILL; ws[f'D{row_n}'].border = thin
+    ws[f'D{row_n}'].number_format = '#,##0.00'
+    ws[f'D{row_n}'].alignment = Alignment(horizontal='right', vertical='center')
+    ws.row_dimensions[row_n].height = 20
+    ws.freeze_panes = 'A5'
+
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    fname = f'report_grouped_{report_date.strftime("%Y%m%d")}.xlsx'
+    from django.http import HttpResponse
+    resp = HttpResponse(buf.read(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp['Content-Disposition'] = f'attachment; filename="{fname}"'
+    return resp

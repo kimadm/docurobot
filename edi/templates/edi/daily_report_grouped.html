@@ -1,0 +1,189 @@
+{% extends 'edi/base.html' %}
+{% block title %}Отчёт по точкам — {{ report_date|date:"d.m.Y" }}{% endblock %}
+{% block page_title %}📋 Отчёт по точкам доставки{% endblock %}
+{% block page_sub %}{{ report_date|date:"d.m.Y" }} · {{ doc_count }} заказов · {{ place_count }} точек{% endblock %}
+
+{% block topbar_actions %}
+<a href="?date={{ report_date|date:'Y-m-d' }}&export=xlsx"
+   class="btn btn-primary" style="text-decoration:none">⬇ Скачать Excel</a>
+{% endblock %}
+
+{% block content %}
+<div style="max-width:1100px;margin:0 auto;display:flex;flex-direction:column;gap:16px">
+
+  <!-- Выбор даты -->
+  <div class="card" style="padding:14px 20px">
+    <form method="get" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <label style="font-size:13px;font-weight:600;color:var(--muted)">Дата:</label>
+      <input type="date" name="date" value="{{ report_date|date:'Y-m-d' }}"
+             style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;
+                    background:var(--surface2);color:var(--text);font-size:13px">
+      <button type="submit" class="btn btn-secondary btn-sm">Показать</button>
+      <a href="?" class="btn btn-secondary btn-sm">Последний день</a>
+      <div style="margin-left:auto;display:flex;gap:6px">
+        <a href="?date={{ prev_date }}" class="btn btn-secondary btn-sm">← Пред.</a>
+        <a href="?date={{ next_date }}" class="btn btn-secondary btn-sm">След. →</a>
+      </div>
+    </form>
+  </div>
+
+  <!-- Переключатель отчётов -->
+  <div style="display:flex;gap:2px;background:var(--surface2);border:1px solid var(--border);
+              border-radius:8px;padding:4px;width:fit-content">
+    <a href="{% url 'daily_report' %}?date={{ report_date|date:'Y-m-d' }}"
+       style="padding:7px 18px;border-radius:6px;font-size:12px;font-weight:600;
+              text-decoration:none;color:var(--muted)">
+      📊 Матрица
+    </a>
+    <a href="{% url 'daily_report_grouped' %}?date={{ report_date|date:'Y-m-d' }}"
+       style="padding:7px 18px;border-radius:6px;font-size:12px;font-weight:600;
+              text-decoration:none;background:var(--accent);color:#fff">
+      📍 По точкам
+    </a>
+  </div>
+
+  {% if place_groups %}
+
+  <!-- Сводка -->
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+    <div class="card" style="text-align:center;padding:16px">
+      <div style="font-size:28px;font-weight:700;color:var(--accent)">{{ doc_count }}</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">Заказов</div>
+    </div>
+    <div class="card" style="text-align:center;padding:16px">
+      <div style="font-size:28px;font-weight:700;color:var(--accent)">{{ place_count }}</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">Точек доставки</div>
+    </div>
+    <div class="card" style="text-align:center;padding:16px">
+      <div style="font-size:22px;font-weight:700;color:var(--accent)">
+        {{ total_amount|floatformat:2 }}
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">Сумма с НДС, ₸</div>
+    </div>
+  </div>
+
+  <!-- Таблица -->
+  <div class="card" style="padding:0;overflow:hidden">
+    <div style="padding:12px 18px;border-bottom:1px solid var(--border);
+                display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <span class="card-title" style="margin:0">Позиции по точкам доставки</span>
+      <input type="text" id="q" placeholder="🔍 Поиск по названию или артикулу…"
+             oninput="filterRows()"
+             style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;
+                    background:var(--surface2);color:var(--text);font-size:12px;width:280px">
+    </div>
+
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead>
+          <tr style="background:var(--surface2)">
+            <th style="padding:10px 14px;text-align:left;border-bottom:2px solid var(--border);
+                       font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Артикул</th>
+            <th style="padding:10px 14px;text-align:left;border-bottom:2px solid var(--border);
+                       font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Наименование продукта</th>
+            <th style="padding:10px 14px;text-align:right;border-bottom:2px solid var(--border);
+                       font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;white-space:nowrap">Кол-во</th>
+            <th style="padding:10px 14px;text-align:right;border-bottom:2px solid var(--border);
+                       font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;white-space:nowrap">Сумма с НДС, ₸</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for group in place_groups %}
+
+          <tr class="group-header" data-group="{{ forloop.counter }}">
+            <td colspan="4" style="padding:10px 14px;background:rgba(37,99,235,.15);
+                                   border-top:2px solid var(--accent);border-bottom:1px solid var(--border)">
+              <div style="font-weight:700;font-size:13px;color:var(--accent)">
+                📍 {{ group.place_name }}
+              </div>
+              {% if group.place_addr %}
+              <div style="font-size:11px;color:var(--muted);margin-top:2px">{{ group.place_addr }}</div>
+              {% endif %}
+            </td>
+          </tr>
+
+          {% for row in group.rows %}
+          <tr class="data-row"
+              data-group="{{ forloop.parentloop.counter }}"
+              data-article="{{ row.article|lower }}"
+              data-name="{{ row.name|lower }}"
+              data-qty="{{ row.qty }}"
+              data-amount="{{ row.amount }}"
+              style="{% cycle '' 'background:var(--surface2)' %}">
+            <td style="padding:9px 14px;border-bottom:1px solid var(--border);
+                       font-family:monospace;font-size:11px;color:var(--muted)">{{ row.article|default:"—" }}</td>
+            <td style="padding:9px 14px;border-bottom:1px solid var(--border);font-weight:500">{{ row.name|default:"—" }}</td>
+            <td style="padding:9px 14px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace">{{ row.qty|floatformat:0 }}</td>
+            <td style="padding:9px 14px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace;font-weight:600">{{ row.amount|floatformat:2 }}</td>
+          </tr>
+          {% endfor %}
+
+          <tr class="subtotal-row" data-group="{{ forloop.counter }}">
+            <td colspan="2" style="padding:9px 14px;border-bottom:2px solid var(--border);
+                                   text-align:right;font-weight:600;font-size:12px;
+                                   background:rgba(37,99,235,.07);color:var(--accent)">Итого по точке</td>
+            <td style="padding:9px 14px;border-bottom:2px solid var(--border);text-align:right;
+                       font-weight:700;font-family:monospace;background:rgba(37,99,235,.07);color:var(--accent)">{{ group.subtotal_qty|floatformat:0 }}</td>
+            <td style="padding:9px 14px;border-bottom:2px solid var(--border);text-align:right;
+                       font-weight:700;font-family:monospace;background:rgba(37,99,235,.07);color:var(--accent)">{{ group.subtotal_amount|floatformat:2 }}</td>
+          </tr>
+
+          {% endfor %}
+
+          <tr style="background:rgba(37,99,235,.1)">
+            <td colspan="2" style="padding:13px 14px;text-align:right;font-weight:700;font-size:14px">ИТОГО:</td>
+            <td id="ft-q" style="padding:13px 14px;text-align:right;font-weight:700;font-family:monospace;font-size:14px;color:var(--accent)">{{ total_qty|floatformat:0 }}</td>
+            <td id="ft-s" style="padding:13px 14px;text-align:right;font-weight:700;font-family:monospace;font-size:14px;color:var(--accent)">{{ total_amount|floatformat:2 }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {% else %}
+  <div class="card">
+    <div class="empty">
+      <div class="empty-icon">📭</div>
+      <p>Нет заказов за {{ report_date|date:"d.m.Y" }}</p>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+<script>
+function filterRows() {
+  var q = document.getElementById('q').value.toLowerCase().trim();
+  var groups = {};
+  document.querySelectorAll('tr.data-row').forEach(function(row) {
+    var g    = row.dataset.group;
+    var show = !q || row.dataset.name.includes(q) || row.dataset.article.includes(q);
+    row.style.display = show ? '' : 'none';
+    if (!groups[g]) groups[g] = {qty:0, amt:0, visible:0};
+    if (show) {
+      groups[g].qty     += parseFloat(row.dataset.qty)    || 0;
+      groups[g].amt     += parseFloat(row.dataset.amount) || 0;
+      groups[g].visible += 1;
+    }
+  });
+  document.querySelectorAll('tr.subtotal-row').forEach(function(row) {
+    var g = row.dataset.group;
+    var d = groups[g] || {qty:0, amt:0, visible:0};
+    var cells = row.querySelectorAll('td');
+    cells[2].textContent = Math.round(d.qty).toLocaleString('ru-RU');
+    cells[3].textContent = d.amt.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});
+  });
+  document.querySelectorAll('tr.group-header').forEach(function(row) {
+    var g    = row.dataset.group;
+    var hide = q && (groups[g]||{visible:0}).visible === 0;
+    row.style.display = hide ? 'none' : '';
+    document.querySelectorAll('tr.subtotal-row[data-group="'+g+'"]').forEach(function(sr){
+      sr.style.display = hide ? 'none' : '';
+    });
+  });
+  var totalQty = 0, totalAmt = 0;
+  Object.values(groups).forEach(function(d){totalQty+=d.qty;totalAmt+=d.amt;});
+  document.getElementById('ft-q').textContent = Math.round(totalQty).toLocaleString('ru-RU');
+  document.getElementById('ft-s').textContent = totalAmt.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+</script>
+{% endblock %}

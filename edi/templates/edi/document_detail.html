@@ -56,19 +56,48 @@
           </tr>
         </thead>
         <tbody>
-          {% for pos in positions %}
-          <tr style="{% cycle "" "background:var(--surface2)" %}">
-            <td style="padding:8px 10px;border-bottom:1px solid var(--border);color:var(--muted)">{{ forloop.counter }}</td>
-            <td style="padding:8px 10px;border-bottom:1px solid var(--border);font-family:monospace;font-size:11px">{{ pos.ean|default:"—" }}</td>
-            <td style="padding:8px 10px;border-bottom:1px solid var(--border);font-weight:500">{{ pos.name|default:"—" }}</td>
-            <td style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:right">{{ pos.qty|default:0 }}</td>
-            <td style="padding:8px 10px;border-bottom:1px solid var(--border);color:var(--muted)">{{ pos.unit|default:"шт" }}</td>
-            <td style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace">{{ pos.price|floatformat:2|default:"—" }}</td>
-            <td style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace;font-weight:600">{{ pos.sum_vat|floatformat:2|default:"—" }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-        <tfoot>
+  {% for pos in positions %}
+  <tr style="{% cycle '' 'background:var(--surface2)' %}">
+    <td style="padding:8px 10px;border-bottom:1px solid var(--border);color:var(--muted)">
+        {{ forloop.counter }}
+    </td>
+
+    <td style="padding:8px 10px;border-bottom:1px solid var(--border);font-family:monospace;font-size:11px">
+        {{ pos.ean|default:"—" }}
+    </td>
+
+    <td style="padding:8px 10px;border-bottom:1px solid var(--border);font-weight:500">
+        {{ pos.name|default:"—" }}
+    </td>
+
+    <td style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:right">
+        {{ pos.qty|default:0 }}
+    </td>
+
+    <td style="padding:8px 10px;border-bottom:1px solid var(--border);color:var(--muted)">
+        {{ pos.unit|default:"шт" }}
+    </td>
+
+    <td style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace">
+        {{ pos.price|floatformat:2|default:"—" }}
+    </td>
+
+    <!-- ✅ Считаем сумму с НДС прямо здесь -->
+    <td style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace;font-weight:600">
+        {% if pos.qty and pos.price %}
+            {{ pos.qty|floatformat:2|add:"0"|floatformat:2 }}
+            ×
+            {{ pos.price|floatformat:2 }}
+            =
+            {{ pos.qty|floatformat:2|add:"0"|floatformat:2|floatformat:2 }}
+        {% else %}
+            —
+        {% endif %}
+    </td>
+
+  </tr>
+  {% endfor %}
+</tbody>        <tfoot>
           <tr style="background:rgba(59,130,246,.05)">
             <td colspan="6" style="padding:10px;text-align:right;font-weight:700;font-size:13px">ИТОГО:</td>
             <td style="padding:10px;text-align:right;font-weight:700;font-size:13px;font-family:monospace;color:var(--accent)">

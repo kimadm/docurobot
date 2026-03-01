@@ -5,7 +5,6 @@ urlpatterns = [
     path('',                    views.dashboard,        name='dashboard'),
     path('documents/',          views.documents,        name='documents'),
     path('documents/<int:pk>/', views.document_detail,  name='document_detail'),
-    path('queue/',              views.queue,            name='queue'),
     path('logs/',               views.logs,             name='logs'),
     path('reports/',            views.reports,          name='reports'),
     path('reports/export/',     views.reports_export,   name='reports_export'),
@@ -13,12 +12,7 @@ urlpatterns = [
     path('settings/',                views.settings_view,  name='settings'),
     path('settings/<str:doc_type>/', views.template_edit,  name='template_edit'),
     # Подключения
-    path('connections/',             views.connections_view,   name='connections'),
-    # API
-    # Печатные формы
-    path('print/',                       views.print_forms,    name='print_forms'),
-    path('print/single/<int:pk>/<str:fmt>/', views.print_single, name='print_single'),
-    path('print/selected/',              views.print_selected, name='print_selected'),
+    path('connections/',             views.connections_view, name='connections'),
     # API
     path('api/retry/<int:pk>/',    views.api_retry,          name='api_retry'),
     path('api/send/<int:pk>/',     views.api_send_document,  name='api_send'),
@@ -30,7 +24,7 @@ urlpatterns = [
     path('api/search/',            views.api_search,         name='api_search'),
     path('api/poll-now/',          views.api_poll_now,       name='api_poll_now'),
     path('health/',                views.healthcheck,        name='healthcheck'),
-    path('api/dashboard/stats/',   views.api_dashboard_stats,name='api_dashboard_stats'),
+    path('api/dashboard/stats/',   views.api_dashboard_stats, name='api_dashboard_stats'),
     path('backup/',                views.backup_db,          name='backup_db'),
     path('api/cleanup/',           views.api_cleanup_now,    name='api_cleanup'),
     path('suppliers/',             views.suppliers,          name='suppliers'),

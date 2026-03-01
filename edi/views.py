@@ -38,24 +38,15 @@ logger = logging.getLogger('edi')
 # ─── Дашборд ─────────────────────────────────────────────
 
 def dashboard(request):
-    # Статистика по статусам очереди
-    queue_stats = {
-        row['status']: row['cnt']
-        for row in SendQueue.objects.values('status').annotate(cnt=Count('id'))
-    }
     # Статистика по типам документов
     doc_stats = {
         row['doc_type']: row['cnt']
         for row in EdiDocument.objects.values('doc_type').annotate(cnt=Count('id'))
     }
     # Последние 8 документов
-    recent_docs  = EdiDocument.objects.select_related('queue_entry').order_by('-received_at')[:8]
-    # Ошибочные записи
-    errors       = SendQueue.objects.filter(
-        status__in=[SendQueue.STATUS_ERROR, SendQueue.STATUS_FAILED]
-    ).select_related('document').order_by('-updated_at')[:5]
+    recent_docs = EdiDocument.objects.order_by('-received_at')[:8]
     # Последние 10 логов
-    recent_logs  = ActivityLog.objects.order_by('-created_at')[:10]
+    recent_logs = ActivityLog.objects.order_by('-created_at')[:10]
     # Динамика за 7 дней
     seven_days = []
     for i in range(6, -1, -1):
@@ -64,16 +55,12 @@ def dashboard(request):
         seven_days.append({'day': day.strftime('%d.%m'), 'count': cnt})
 
     return render(request, 'edi/dashboard.html', {
-        'queue_stats': queue_stats,
         'doc_stats':   doc_stats,
         'recent_docs': recent_docs,
-        'errors':      errors,
         'recent_logs': recent_logs,
         'seven_days':  json.dumps(seven_days),
         'total_docs':  EdiDocument.objects.count(),
-        'total_sent':  SendQueue.objects.filter(status=SendQueue.STATUS_SENT).count(),
-        'total_errors':SendQueue.objects.filter(status__in=[SendQueue.STATUS_ERROR, SendQueue.STATUS_FAILED]).count(),
-        'pending':     SendQueue.objects.filter(status=SendQueue.STATUS_PENDING).count(),
+        'today_docs':  EdiDocument.objects.filter(received_at__date=date.today()).count(),
     })
 
 
@@ -130,16 +117,28 @@ def document_detail(request, pk):
         except Exception:
             pass
 
-    # Передаём позиции явно — Django шаблон иногда не читает вложенные JSONField ключи
     raw = doc.raw_json or {}
     positions = raw.get('positions') or []
+
+    # Обогащаем позиции — считаем sum_vat и amount если их нет (старые документы)
+    for pos in positions:
+        if not pos.get('sum_vat'):
+            price    = float(pos.get('price') or 0)
+            vat_rate = float(pos.get('vat_rate') or 0)
+            pos['sum_vat'] = round(price * (1 + vat_rate / 100), 2) if price else 0
+        if not pos.get('amount'):
+            pos['amount'] = round(float(pos.get('sum_vat') or 0) * float(pos.get('qty') or 0), 2)
+        if not pos.get('article_buyer'):
+            pos['article_buyer'] = pos.get('ean', '')
+
+    total_amount = sum(float(p.get('amount') or 0) for p in positions) or float(raw.get('totalAmount') or 0)
 
     return render(request, 'edi/document_detail.html', {
         'doc': doc, 'queue': queue, 'logs': logs, 'comments': comments,
         'importance_choices': DocumentComment.IMPORTANCE_CHOICES,
         'positions': positions,
         'positions_json': json.dumps(positions, ensure_ascii=False),
-        'total_amount': raw.get('totalAmount', ''),
+        'total_amount': round(total_amount, 2),
     })
 
 
@@ -221,19 +220,6 @@ def api_comment_delete(request, comment_id):
 
 # ─── Очередь ─────────────────────────────────────────────
 
-def queue(request):
-    qs = SendQueue.objects.select_related('document').order_by('-updated_at')
-    status_filter = request.GET.get('status', '')
-    if status_filter:
-        qs = qs.filter(status=status_filter)
-    return render(request, 'edi/queue.html', {
-        'entries': qs[:100],
-        'statuses': SendQueue.STATUSES,
-        'filter_status': status_filter,
-    })
-
-
-# ─── Логи ────────────────────────────────────────────────
 
 def logs(request):
     from django.core.paginator import Paginator
@@ -1035,28 +1021,7 @@ def healthcheck(request):
         checks.append({'name': 'Docrobot API', 'status': 'error',
                         'detail': str(e)[:120], 'icon': '🔗'})
 
-    # 3. 1С HTTP-сервис
-    try:
-        import requests as req
-        cfg = ConnectionSettings.get()
-        if cfg.onec_url and cfg.onec_url != 'http://localhost/hs/docrobot/orders':
-            auth = (cfg.onec_username, cfg.onec_password) if cfg.onec_username else None
-            r = req.get(cfg.onec_url, auth=auth, timeout=5)
-            # 404/405 — сервис есть, но неверный метод/путь — это нормально
-            if r.status_code < 500:
-                checks.append({'name': '1С HTTP-сервис', 'status': 'ok',
-                                'detail': f'HTTP {r.status_code} · {cfg.onec_url}', 'icon': '1️⃣'})
-            else:
-                checks.append({'name': '1С HTTP-сервис', 'status': 'error',
-                                'detail': f'HTTP {r.status_code} · сервер вернул ошибку', 'icon': '1️⃣'})
-        else:
-            checks.append({'name': '1С HTTP-сервис', 'status': 'warn',
-                            'detail': 'URL не настроен — перейдите в Подключения', 'icon': '1️⃣'})
-    except Exception as e:
-        checks.append({'name': '1С HTTP-сервис', 'status': 'error',
-                        'detail': str(e)[:120], 'icon': '1️⃣'})
-
-    # 4. Последний поллинг
+    # 3. Последний поллинг
     try:
         last_poll = ActivityLog.objects.filter(
             action__in=['docrobot_poll', 'manual_poll']
@@ -1073,23 +1038,6 @@ def healthcheck(request):
     except Exception as e:
         checks.append({'name': 'Последний поллинг', 'status': 'error',
                         'detail': str(e), 'icon': '🔄'})
-
-    # 5. Очередь — зависшие документы
-    try:
-        from datetime import timedelta
-        stuck = SendQueue.objects.filter(
-            status__in=[SendQueue.STATUS_ERROR, SendQueue.STATUS_FAILED]
-        ).count()
-        pending = SendQueue.objects.filter(status=SendQueue.STATUS_PENDING).count()
-        if stuck == 0:
-            checks.append({'name': 'Очередь отправки', 'status': 'ok',
-                            'detail': f'Ошибок нет · Ожидает: {pending}', 'icon': '📤'})
-        else:
-            checks.append({'name': 'Очередь отправки', 'status': 'warn',
-                            'detail': f'Ошибок: {stuck} · Ожидает: {pending}', 'icon': '📤'})
-    except Exception as e:
-        checks.append({'name': 'Очередь отправки', 'status': 'error',
-                        'detail': str(e), 'icon': '📤'})
 
     # Системная информация
     sys_info = {
@@ -1406,18 +1354,26 @@ def daily_report_grouped(request):
             groups[place_key] = defaultdict(lambda: {
                 'article': '', 'name': '', 'qty': 0.0, 'amount': 0.0,
             })
-
         for pos in raw.get('positions', []):
             ean = pos.get('ean', '')
             if not ean:
                 continue
+
             g = groups[place_key][ean]
-            g['article']  = pos.get('article_buyer') or pos.get('ean', '')
-            g['name']     = pos.get('name', '')
-            qty_val       = float(pos.get('qty') or 0)
-            g['qty']     += qty_val
-            price_vat     = float(pos.get('sum_vat') or pos.get('price_vat') or 0)
-            g['amount']  += price_vat * qty_val
+
+            g['article'] = pos.get('article_buyer') or pos.get('ean', '')
+            g['name'] = pos.get('name', '')
+
+            qty_val = float(pos.get('qty') or 0)
+            price = float(pos.get('price') or 0)
+            vat_rate = float(pos.get('vat_rate') or 0)
+
+            # 👉 считаем цену с НДС
+            price_with_vat = price * (1 + vat_rate / 100)
+
+            g['price'] = price_with_vat
+            g['qty'] += qty_val
+            g['amount'] += price_with_vat * qty_val
 
     place_groups = []
     total_qty    = 0.0

@@ -222,14 +222,24 @@ class DocrobotClient:
             positions = []
             for p in (head.get('POSITION', []) if isinstance(head, dict) else []):
                 char = p.get('CHARACTERISTIC', {}) or {}
+                qty      = float(p.get('ORDEREDQUANTITY', p.get('DELIVEREDQUANTITY', 0)) or 0)
+                sum_vat  = float(p.get('PRICEWITHVAT', 0) or 0)   # цена за ед. с НДС
+                price    = float(p.get('ORDERPRICE', 0) or 0)      # цена без НДС
+                vat_rate = float(p.get('VAT', 0) or 0)
+                # если PRICEWITHVAT не пришёл — считаем из ORDERPRICE
+                if not sum_vat and price:
+                    sum_vat = round(price * (1 + vat_rate / 100), 2)
                 positions.append({
-                    'ean':      str(p.get('PRODUCT', '')),
-                    'name':     char.get('DESCRIPTION', '') if isinstance(char, dict) else '',
-                    'qty':      float(p.get('ORDEREDQUANTITY', p.get('DELIVEREDQUANTITY', 0)) or 0),
-                    'price':    float(p.get('ORDERPRICE', p.get('PRICEWITHVAT', 0)) or 0),
-                    'unit':     p.get('ORDERUNIT', 'PCE'),
-                    'vat_rate': p.get('VAT', 0),
-                    'amount':   float(p.get('AMOUNTWITHVAT', p.get('AMOUNT', 0)) or 0),
+                    'ean':          str(p.get('PRODUCT', '')),
+                    'article_buyer':str(p.get('PRODUCTIDBUYER', '')),
+                    'article_sup':  str(p.get('PRODUCTIDSUPPLIER', '')),
+                    'name':         char.get('DESCRIPTION', '') if isinstance(char, dict) else '',
+                    'qty':          qty,
+                    'price':        price,
+                    'sum_vat':      sum_vat,
+                    'unit':         p.get('ORDERUNIT', 'PCE'),
+                    'vat_rate':     vat_rate,
+                    'amount':       round(sum_vat * qty, 2),
                 })
 
             doc_id = str(raw.get('documentId') or raw.get('docflowId') or raw.get('id') or '')

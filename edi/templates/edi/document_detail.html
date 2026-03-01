@@ -5,12 +5,6 @@
 {% block page_sub %}Docrobot ID: {{ doc.docrobot_id }}{% endblock %}
 
 {% block topbar_actions %}
-{% if queue and queue.status != 'sent' %}
-<button class="btn btn-warn" onclick="retryQueue({{ queue.id }}, this)">↺ Повторить отправку</button>
-{% endif %}
-{% if queue and queue.status == 'failed' or not queue %}
-<button class="btn btn-primary" onclick="sendDoc({{ doc.pk }}, this)">→ Отправить в 1С</button>
-{% endif %}
 {% endblock %}
 
 {% block content %}
@@ -134,43 +128,6 @@
   <!-- Правая колонка: очередь + логи -->
   <div style="display:flex;flex-direction:column;gap:16px;">
 
-    <!-- Статус очереди -->
-    <div class="card">
-      <div class="card-title">Статус отправки в 1С</div>
-      {% if queue %}
-      <div style="margin-bottom:12px;">
-        <span class="badge badge-{{ queue.status }}" style="font-size:13px;padding:4px 12px;">{{ queue.get_status_display }}</span>
-      </div>
-      <table class="meta-table" style="width:100%">
-        <tr><td>Попыток</td><td class="td-mono">{{ queue.attempts }}</td></tr>
-        <tr><td>Создан</td><td class="td-mono">{{ queue.created_at|date:"d.m.Y H:i" }}</td></tr>
-        <tr><td>Обновлён</td><td class="td-mono">{{ queue.updated_at|date:"d.m.Y H:i" }}</td></tr>
-        {% if queue.sent_at %}
-        <tr><td>Отправлен</td><td class="td-mono" style="color:var(--accent2)">{{ queue.sent_at|date:"d.m.Y H:i" }}</td></tr>
-        {% endif %}
-        {% if queue.http_status %}
-        <tr><td>HTTP-код</td><td class="td-mono">{{ queue.http_status }}</td></tr>
-        {% endif %}
-        {% if queue.next_retry %}
-        <tr><td>Следующая попытка</td><td class="td-mono" style="color:var(--warn)">{{ queue.next_retry|date:"d.m H:i" }}</td></tr>
-        {% endif %}
-      </table>
-      {% if queue.last_error %}
-      <div style="margin-top:12px;padding:10px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:6px;font-size:12px;color:var(--danger);font-family:var(--mono);">
-        {{ queue.last_error }}
-      </div>
-      {% endif %}
-      {% if queue.response %}
-      <div style="margin-top:10px;">
-        <div style="font-size:11px;color:var(--text3);margin-bottom:4px;">Ответ 1С:</div>
-        <div class="code-block" style="max-height:120px;">{{ queue.response }}</div>
-      </div>
-      {% endif %}
-      {% else %}
-      <div style="color:var(--text3);font-size:13px;">Документ не добавлен в очередь</div>
-      {% endif %}
-    </div>
-
     <!-- ── Комментарии ── -->
     <div class="card" id="comments-card">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
@@ -262,25 +219,7 @@ function copyXml() {  const text = document.getElementById('xml-content').textCo
   navigator.clipboard.writeText(text).then(() => toast('XML скопирован', 'success'));
 }
 
-async function sendDoc(id, btn) {
-  btn.disabled = true;
-  btn.textContent = '...';
-  try {
-    const r = await fetch(`/api/send/${id}/`, {
-      method: 'POST',
-      headers: { 'X-CSRFToken': getCookie('csrftoken') },
-    });
-    const d = await r.json();
-    if (d.success) {
-      toast('Отправлено успешно', 'success');
-      setTimeout(() => location.reload(), 1000);
-    } else {
-      toast(`Ошибка: ${d.error}`, 'error');
-      btn.disabled = false;
-      btn.textContent = '→ Отправить в 1С';
-    }
-  } catch(e) { toast('Сетевая ошибка', 'error'); btn.disabled = false; }
-}
+
 
 // ── Комментарии ──────────────────────────────────────
 function toggleCommentForm() {

@@ -1,8 +1,8 @@
 {% extends 'edi/base.html' %}
 {% load edi_tags %}
-{% block title %}Дашборд — Docrobot EDI{% endblock %}
+{% block title %}Дашборд — Docurobot EDI{% endblock %}
 {% block page_title %}Дашборд{% endblock %}
-{% block page_sub %}Мониторинг документооборота Docrobot → 1С{% endblock %}
+{% block page_sub %}Мониторинг входящих документов Docurobot EDI{% endblock %}
 
 {% block topbar_actions %}
 <button class="btn btn-primary" id="pollNowBtn" onclick="pollNow()">⚡ Получить сейчас</button>
@@ -19,16 +19,8 @@
     <div class="stat-value blue" id="rt-total">{{ total_docs }}</div>
   </div>
   <div class="stat-card" style="--accent-color:var(--accent2)">
-    <div class="stat-label">Отправлено в 1С</div>
-    <div class="stat-value green" id="rt-sent">{{ total_sent }}</div>
-  </div>
-  <div class="stat-card" style="--accent-color:var(--warn)">
-    <div class="stat-label">Ожидают</div>
-    <div class="stat-value warn" id="rt-pending">{{ pending }}</div>
-  </div>
-  <div class="stat-card" style="--accent-color:var(--danger)">
-    <div class="stat-label">Ошибки</div>
-    <div class="stat-value red" id="rt-errors">{{ total_errors }}</div>
+    <div class="stat-label">Сегодня</div>
+    <div class="stat-value green" id="rt-today">{{ today_docs }}</div>
   </div>
   {% for type, label in doc_stats.items %}
   <div class="stat-card">
@@ -46,18 +38,13 @@
       <a href="{% url 'documents' %}" class="btn btn-secondary btn-sm">Все →</a>
     </div>
     <table>
-      <thead><tr><th>Тип</th><th>Номер</th><th>Поставщик</th><th>Статус</th><th>Получен</th></tr></thead>
+      <thead><tr><th>Тип</th><th>Номер</th><th>Поставщик</th><th>Получен</th></tr></thead>
       <tbody>
         {% for doc in recent_docs %}
         <tr onclick="location.href='{% url 'document_detail' doc.pk %}'" style="cursor:pointer">
           <td><span class="badge badge-{{ doc.doc_type }}">{{ doc.get_doc_type_display }}</span></td>
           <td class="td-mono">{{ doc.number|default:"—" }}</td>
           <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ doc.supplier_name|default:"—" }}</td>
-          <td>
-            {% with q=doc.queue_entry %}
-            {% if q %}<span class="badge badge-{{ q.status }}">{{ q.get_status_display }}</span>{% else %}<span class="badge badge-pending">—</span>{% endif %}
-            {% endwith %}
-          </td>
           <td class="td-mono">{{ doc.received_at|date:"d.m H:i" }}</td>
         </tr>
         {% empty %}
@@ -72,20 +59,7 @@
     <div class="card-title">Документы за 7 дней</div>
     <div id="week-chart" style="display:flex;align-items:flex-end;gap:6px;height:90px;"></div>
     <div style="margin-top:12px;">
-      {% if errors %}
-      <div style="font-size:12px;font-weight:600;color:var(--danger);margin-bottom:8px;">⚠ Требуют внимания</div>
-      {% for e in errors %}
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
-        <div>
-          <span class="badge badge-{{ e.document.doc_type }}">{{ e.document.doc_type }}</span>
-          <span style="font-family:var(--mono);font-size:11px;margin-left:6px;">{{ e.document.number }}</span>
-        </div>
-        <button class="btn btn-warn btn-sm" onclick="retryQueue({{ e.id }}, this)">↺ Повтор</button>
-      </div>
-      {% endfor %}
-      {% else %}
-      <div style="color:var(--accent2);font-size:12px;">✓ Ошибок нет</div>
-      {% endif %}
+
     </div>
   </div>
 </div>
@@ -139,23 +113,17 @@ function refreshStats() {
     .then(d => {
       // Обновляем счётчики
       const totalEl = document.getElementById('rt-total');
-      const sentEl  = document.getElementById('rt-sent');
-      const errEl   = document.getElementById('rt-errors');
-      const pendEl  = document.getElementById('rt-pending');
       const timeEl  = document.getElementById('rt-time');
 
       if (totalEl) totalEl.textContent = d.total_docs;
-      if (sentEl)  sentEl.textContent  = d.total_sent;
-      if (errEl)   errEl.textContent   = d.total_errors;
-      if (pendEl)  pendEl.textContent  = d.pending;
       if (timeEl)  timeEl.textContent  = d.server_time;
 
       // Новые документы — мигаем
       if (d.total_docs > lastDocCount) {
         const diff = d.total_docs - lastDocCount;
         showNotification(`📥 Новых документов: ${diff}`);
-        document.title = `(${diff} new) Docrobot EDI`;
-        setTimeout(() => document.title = 'Docrobot EDI Gateway', 5000);
+        document.title = `(${diff} новых) Docurobot EDI`;
+        setTimeout(() => document.title = 'Docurobot EDI', 5000);
         lastDocCount = d.total_docs;
       }
 

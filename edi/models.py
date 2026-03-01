@@ -121,8 +121,9 @@ class ActivityLog(models.Model):
     level      = models.CharField(max_length=5, choices=LEVELS, default=LEVEL_INFO, verbose_name='Уровень')
     action     = models.CharField(max_length=100, verbose_name='Действие')
     message    = models.TextField(verbose_name='Сообщение')
+    # ✅ ДОБАВЬТЕ ЭТО ПОЛЕ:
     document   = models.ForeignKey(
-        EdiDocument, on_delete=models.SET_NULL,
+        'EdiDocument', on_delete=models.SET_NULL,
         null=True, blank=True, related_name='logs', verbose_name='Документ'
     )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Время')

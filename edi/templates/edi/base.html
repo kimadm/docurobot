@@ -219,9 +219,7 @@
         <a href="{% url 'documents' %}" class="nav-item {% if 'document' in request.resolver_match.url_name %}active{% endif %}">
           <span class="nav-icon">📄</span> Документы
         </a>
-        <a href="{% url 'queue' %}" class="nav-item {% if request.resolver_match.url_name == 'queue' %}active{% endif %}">
-          <span class="nav-icon">⏳</span> Очередь 1С
-        </a>
+
       </div>
       <div class="nav-section">
         <div class="nav-label">Мониторинг</div>
@@ -232,12 +230,7 @@
           <span class="nav-icon">📊</span> Отчёты
         </a>
       </div>
-      <div class="nav-section">
-        <div class="nav-label">Экспорт</div>
-        <a href="{% url 'print_forms' %}" class="nav-item {% if 'print' in request.resolver_match.url_name %}active{% endif %}">
-          <span class="nav-icon">🖨️</span> Печатные формы
-        </a>
-      </div>
+
       <div class="nav-section">
         <div class="nav-label">Аналитика</div>
         <a href="{% url 'daily_report' %}" class="nav-item {% if request.resolver_match.url_name == 'daily_report' %}active{% endif %}">

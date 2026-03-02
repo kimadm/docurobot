@@ -12,10 +12,21 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument('--once', action='store_true', help='Один цикл и выйти')
 
+    def _get_interval(self):
+        """Читает интервал из БД. Если недоступно — берёт из settings."""
+        try:
+            from edi.models import ConnectionSettings
+            cfg = ConnectionSettings.get()
+            if cfg and cfg.docrobot_poll_interval:
+                return int(cfg.docrobot_poll_interval)
+        except Exception:
+            pass
+        return getattr(settings, 'DOCROBOT_POLL_INTERVAL', 60)
+
     def handle(self, *args, **options):
         from edi.services import DocrobotClient
         client   = DocrobotClient()
-        interval = settings.DOCROBOT_POLL_INTERVAL
+        interval = self._get_interval()
 
         self.stdout.write(self.style.SUCCESS(
             f'Поллинг запущен. Интервал: {interval}с. Ctrl+C для остановки.'
@@ -36,6 +47,10 @@ class Command(BaseCommand):
 
             if options['once']:
                 break
+
+            # Читаем интервал каждый раз — учитывает изменения из веб-интерфейса без перезапуска
+            interval = self._get_interval()
+            self.stdout.write(f'Следующий цикл через {interval}с...')
             time.sleep(interval)
 
     def _poll_cycle(self, client):
@@ -47,8 +62,11 @@ class Command(BaseCommand):
         except Exception as e:
             logger.error(f'Ошибка Docrobot API: {e}', exc_info=True)
             self.stdout.write(self.style.ERROR(f'Ошибка Docrobot: {e}'))
+            ActivityLog.objects.create(
+                level='error', action='docrobot_poll',
+                message=f'Ошибка API: {str(e)[:200]}',
+            )
             return
-
         new_count = 0
         for normalized in documents:
             try:
@@ -56,7 +74,6 @@ class Command(BaseCommand):
                 if not doc_id:
                     continue
 
-                # Пропускаем, если уже в базе
                 if EdiDocument.objects.filter(docrobot_id=doc_id).exists():
                     continue
 
@@ -69,7 +86,7 @@ class Command(BaseCommand):
                     buyer_gln     = normalized.get('buyerGln', ''),
                     supplier_name = normalized.get('supplierName', ''),
                     buyer_name    = normalized.get('buyerName', ''),
-                    raw_json = normalized,
+                    raw_json      = normalized,
                 )
                 SendQueue.objects.create(document=doc)
                 new_count += 1
@@ -90,47 +107,49 @@ class Command(BaseCommand):
         else:
             logger.debug('Новых документов нет')
             self.stdout.write(self.style.WARNING('Новых документов для загрузки нет.'))
+            ActivityLog.objects.create(
+                level='info', action='docrobot_poll',
+                message='Автополлинг: новых документов нет',
+            )
 
     def _process_queue(self):
         from edi.models import SendQueue
         from edi.services import process_document
-
-        # Очередь на отправку
         from django.db.models import Q
-        queue = SendQueue.objects.filter(
+
+        queue = list(SendQueue.objects.filter(
             Q(status=SendQueue.STATUS_PENDING, next_retry__isnull=True) |
             Q(status=SendQueue.STATUS_ERROR, next_retry__lte=timezone.now())
-        ).select_related('document')[:20]
+        ).select_related('document')[:20])
 
-        if not queue.exists():
+        if not queue:
             return
 
-        self.stdout.write(f'Обработка очереди отправки в 1С ({queue.count()} записей)...')
+        self.stdout.write(f'Обработка очереди отправки в 1С ({len(queue)} записей)...')
 
         for entry in queue:
             try:
                 entry.status = SendQueue.STATUS_SENDING
                 entry.save(update_fields=['status'])
-                
+
                 success = process_document(entry)
-                
+
                 if success:
                     self.stdout.write(self.style.SUCCESS(f'  [>>] {entry.document.number} отправлен в 1С'))
                 else:
                     self.stdout.write(self.style.ERROR(f'  [XX] {entry.document.number} — ошибка 1С'))
             except Exception as e:
                 self.stdout.write(self.style.ERROR(f'  [!] Ошибка очереди {entry.id}: {e}'))
+
     def _maybe_cleanup(self):
         """Запускает очистку раз в сутки если настроена."""
         import threading
-        from django.utils import timezone
         from edi.models import ConnectionSettings, ActivityLog
 
         try:
             cfg = ConnectionSettings.get()
             if not cfg.cleanup_days:
                 return
-            # Проверяем, делали ли сегодня уже очистку
             today = timezone.now().date()
             already = ActivityLog.objects.filter(
                 action='cleanup',
@@ -138,7 +157,7 @@ class Command(BaseCommand):
             ).exists()
             if already:
                 return
-            # Запускаем в фоне
+
             def _run():
                 from django.core.management import call_command
                 call_command('cleanup_old')

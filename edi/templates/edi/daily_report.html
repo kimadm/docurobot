@@ -10,76 +10,151 @@
 
 {% block extra_head %}
 <style>
-  /* Фиксация первых 3 колонок при горизонтальном скролле */
-  .matrix-wrap { overflow-x: auto; }
-  .matrix-table { border-collapse: collapse; font-size: 12px; white-space: nowrap; }
-  .matrix-table th, .matrix-table td { border: 1px solid var(--border); }
+  /* ── Обёртка ── */
+  .matrix-wrap { overflow-x: auto; scroll-behavior: smooth; }
+  .matrix-table {
+    border-collapse: collapse;
+    font-size: 11px;
+    table-layout: fixed;
+    white-space: nowrap;
+  }
+  .matrix-table th, .matrix-table td {
+    border: 1px solid #3a4a5a;
+  }
 
-  .col-fixed-1 { position: sticky; left: 0;   z-index: 2; background: var(--surface); min-width: 110px; max-width: 130px; }
-  .col-fixed-2 { position: sticky; left: 130px; z-index: 2; background: var(--surface); min-width: 240px; max-width: 280px; }
-  .col-fixed-3 { position: sticky; left: 410px; z-index: 2; background: var(--surface); min-width: 80px; }
+  /* ── Ширины ── */
+  :root {
+    --w1: 120px;   /* Артикул */
+    --w2: 400px;   /* Наименование */
+    --w3: 44px;    /* Крат. */
+    --wc: 80px;    /* Колонка магазина */
+  }
 
+  /* ── Sticky первые 3 колонки ── */
+  .col-fixed-1 {
+    position: sticky; left: 0; z-index: 2; background: #1e2d3d;
+    width: var(--w1); min-width: var(--w1); max-width: var(--w1);
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .col-fixed-2 {
+    position: sticky; left: var(--w1); z-index: 2; background: #1e2d3d;
+    width: var(--w2); min-width: var(--w2); max-width: var(--w2);
+    white-space: normal; word-break: break-word;
+  }
+  .col-fixed-3 {
+    position: sticky; left: calc(var(--w1) + var(--w2)); z-index: 2; background: #1e2d3d;
+    width: var(--w3); min-width: var(--w3); max-width: var(--w3);
+    text-align: center;
+    box-shadow: 3px 0 6px rgba(0,0,0,0.4);
+  }
   .matrix-table thead th.col-fixed-1,
   .matrix-table thead th.col-fixed-2,
-  .matrix-table thead th.col-fixed-3 { z-index: 3; }
+  .matrix-table thead th.col-fixed-3 { z-index: 3; background: #1a3a5c; }
 
-  .th-place {
-    background: #2D4A7A !important;
-    color: #fff !important;
-    padding: 8px 10px;
-    text-align: center;
+  /* ── Заголовок строки магазинов — как в Excel ── */
+  .th-place-wrap {
+    background: #1a3a5c;
+    color: #fff;
     font-size: 10px;
     font-weight: 600;
-    min-width: 80px;
-    max-width: 120px;
+    text-align: center;
+    vertical-align: middle;
+    padding: 4px 3px;
+    width: var(--wc); min-width: var(--wc); max-width: var(--wc);
     white-space: normal;
     word-break: break-word;
+    line-height: 1.2;
+    cursor: default;
+  }
+  .th-place-wrap:hover { background: #2a5a8c; }
+
+  /* ── Шапка фиксированных колонок ── */
+  .th-fixed {
+    background: #1a3a5c !important;
+    color: #a0bcd8 !important;
+    padding: 6px 8px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .3px;
     vertical-align: middle;
   }
-  .th-fixed {
-    background: var(--surface2) !important;
-    color: var(--muted) !important;
-    padding: 8px 10px;
-    font-size: 10px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: .4px;
-  }
   .th-itogo {
-    background: #1E3A5F !important;
-    color: #fff !important;
-    padding: 8px 10px;
+    background: #0f2540 !important;
+    color: #60a5fa !important;
+    padding: 4px 4px;
     text-align: center;
     font-size: 10px;
     font-weight: 700;
-    min-width: 70px;
+    width: 60px; min-width: 60px;
+    vertical-align: middle;
+    white-space: nowrap;
   }
 
-  .td-article { font-family: monospace; font-size: 11px; color: var(--muted); padding: 7px 10px; text-align: center; }
-  .td-name    { padding: 7px 10px; font-weight: 500; white-space: normal; word-break: break-word; max-width: 280px; }
-  .td-unit    { padding: 7px 10px; text-align: center; color: var(--muted); font-size: 11px; }
-  .td-qty     { padding: 7px 10px; text-align: center; font-family: monospace; }
-  .td-zero    { color: var(--border); }
-  .td-total-row { padding: 7px 10px; text-align: center; font-family: monospace; font-weight: 700; color: var(--accent); }
+  /* ── Ячейки данных ── */
+  .td-article {
+    font-family: monospace; font-size: 10px; color: #7a9ab5;
+    padding: 3px 6px; text-align: center;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .td-name {
+    padding: 3px 8px; font-size: 11px; font-weight: 500;
+    white-space: normal; word-break: break-word; line-height: 1.3;
+    color: var(--text);
+  }
+  .td-unit {
+    padding: 3px 4px; text-align: center;
+    color: #7a9ab5; font-size: 10px;
+  }
+  .td-qty {
+    padding: 3px 4px; text-align: center;
+    font-family: monospace; font-size: 11px;
+    width: var(--wc); min-width: var(--wc);
+  }
+  .td-zero { color: #2a3a4a; }
+  .td-total-row {
+    padding: 3px 6px; text-align: center;
+    font-family: monospace; font-weight: 700;
+    color: #60a5fa; font-size: 11px;
+    width: 60px;
+  }
 
-  .tr-alt td { background: var(--surface2) !important; }
-  .tr-alt .col-fixed-1,
-  .tr-alt .col-fixed-2,
-  .tr-alt .col-fixed-3 { background: var(--surface2) !important; }
+  /* ── Строки ── */
+  .matrix-table tbody tr { height: 26px; }
+  .matrix-table tbody tr:hover td { background: rgba(37,99,235,.08) !important; }
+  .tr-alt td { background: rgba(255,255,255,0.03) !important; }
+  .tr-alt .col-fixed-1, .tr-alt .col-fixed-2, .tr-alt .col-fixed-3 {
+    background: rgba(255,255,255,0.03) !important;
+  }
+  .matrix-table tbody tr:hover .col-fixed-1,
+  .matrix-table tbody tr:hover .col-fixed-2,
+  .matrix-table tbody tr:hover .col-fixed-3 {
+    background: rgba(37,99,235,.12) !important;
+  }
 
+  /* ── Итоговая строка ── */
   .tr-footer td {
-    background: rgba(37,99,235,.1) !important;
-    font-weight: 700; color: var(--accent);
+    background: rgba(37,99,235,.12) !important;
+    font-weight: 700; color: #60a5fa;
     font-family: monospace; text-align: center;
-    padding: 10px;
-    font-size: 13px;
+    padding: 5px 4px; font-size: 11px;
+    border-top: 2px solid #2563eb;
   }
-  .tr-footer .col-fixed-1,
-  .tr-footer .col-fixed-2,
-  .tr-footer .col-fixed-3 { background: rgba(37,99,235,.1) !important; }
+  .tr-footer .col-fixed-1, .tr-footer .col-fixed-2, .tr-footer .col-fixed-3 {
+    background: rgba(37,99,235,.12) !important;
+  }
 
-  /* Скрытые строки при поиске */
   .row-hidden { display: none; }
+
+  /* ── Кнопки прокрутки ── */
+  .scroll-btn {
+    width: 28px; height: 28px; border-radius: 5px;
+    border: 1px solid #3a4a5a; background: #1e2d3d; color: #a0bcd8;
+    font-size: 14px; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: all .15s;
+  }
+  .scroll-btn:hover { background: #2563eb; color: #fff; border-color: #2563eb; }
 </style>
 {% endblock %}
 
@@ -142,27 +217,30 @@
   <!-- Таблица -->
   <div class="card" style="padding:0;overflow:hidden">
 
-    <div style="padding:12px 18px;border-bottom:1px solid var(--border);
-                display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <div style="padding:10px 16px;border-bottom:1px solid #2a3a4a;
+                display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <span class="card-title" style="margin:0">Матрица заказов</span>
       <input type="text" id="q" placeholder="🔍 Поиск по названию или артикулу…"
              oninput="filterRows()"
-             style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;
-                    background:var(--surface2);color:var(--text);font-size:12px;width:280px">
-      <span style="font-size:11px;color:var(--muted)">
-        ← Прокрутите таблицу по горизонтали
-      </span>
+             style="padding:5px 10px;border:1px solid #3a4a5a;border-radius:5px;
+                    background:#1e2d3d;color:var(--text);font-size:12px;width:250px">
+      <div style="margin-left:auto;display:flex;gap:4px">
+        <button class="scroll-btn" onclick="scrollT(-99999)" title="В начало">⏮</button>
+        <button class="scroll-btn" onclick="scrollT(-300)"   title="Влево">‹</button>
+        <button class="scroll-btn" onclick="scrollT(300)"    title="Вправо">›</button>
+        <button class="scroll-btn" onclick="scrollT(99999)"  title="В конец">⏭</button>
+      </div>
     </div>
 
-    <div class="matrix-wrap">
+    <div class="matrix-wrap" id="matrixWrap">
       <table class="matrix-table" id="matrix">
         <thead>
           <tr>
             <th class="th-fixed col-fixed-1">Артикул</th>
             <th class="th-fixed col-fixed-2" style="text-align:left">Наименование продукта</th>
-            <th class="th-fixed col-fixed-3">Кратность</th>
+            <th class="th-fixed col-fixed-3">Крат.</th>
             {% for place in place_list %}
-            <th class="th-place">{{ place }}</th>
+            <th class="th-place-wrap" title="{{ place }}">{{ place }}</th>
             {% endfor %}
             <th class="th-itogo">ИТОГО</th>
           </tr>
@@ -212,15 +290,31 @@
 </div>
 
 <script>
-// Исходные данные колонок для пересчёта
 var colCount = {{ place_count }};
 
+function scrollT(delta) {
+  var w = document.getElementById('matrixWrap');
+  if (!w) return;
+  if (delta > 9000)       w.scrollLeft = w.scrollWidth;
+  else if (delta < -9000) w.scrollLeft = 0;
+  else w.scrollBy({ left: delta, behavior: 'smooth' });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  var w = document.getElementById('matrixWrap');
+  if (!w) return;
+  w.addEventListener('wheel', function(e) {
+    if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    e.preventDefault();
+    w.scrollLeft += e.deltaY * 3;
+  }, { passive: false });
+});
+
 function filterRows() {
-  var q    = document.getElementById('q').value.toLowerCase().trim();
+  var q = document.getElementById('q').value.toLowerCase().trim();
   var rows = document.querySelectorAll('tr.data-row');
-  var colSums   = new Array(colCount).fill(0);
-  var grandSum  = 0;
-  var visCount  = 0;
+  var colSums = new Array(colCount).fill(0);
+  var grandSum = 0, visCount = 0;
 
   rows.forEach(function(row) {
     var show = !q || row.dataset.name.includes(q) || row.dataset.article.includes(q);
@@ -228,24 +322,20 @@ function filterRows() {
     if (show) {
       visCount++;
       grandSum += parseFloat(row.dataset.total) || 0;
-      var cells = row.querySelectorAll('td.td-qty');
-      cells.forEach(function(cell, i) {
+      row.querySelectorAll('td.td-qty').forEach(function(cell, i) {
         colSums[i] += parseFloat(cell.textContent) || 0;
       });
     }
   });
 
-  // Обновляем итоговую строку
   for (var i = 0; i < colCount; i++) {
     var el = document.getElementById('ct-' + i);
-    if (el) el.textContent = colSums[i] ? Math.round(colSums[i]).toLocaleString('ru-RU') : '';
+    if (el) el.textContent = colSums[i] ? Math.round(colSums[i]) : '';
   }
   var gt = document.getElementById('grand-total');
   if (gt) gt.textContent = Math.round(grandSum).toLocaleString('ru-RU');
-
   var vt = document.getElementById('vis-total');
   if (vt) vt.textContent = Math.round(grandSum).toLocaleString('ru-RU');
-
   var vr = document.getElementById('vis-rows');
   if (vr) vr.textContent = visCount;
 }

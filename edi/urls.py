@@ -34,4 +34,8 @@ urlpatterns = [
     path('api/comments/<int:pk>/add/',          views.api_comment_add,    name='api_comment_add'),
     path('api/comments/<int:comment_id>/delete/', views.api_comment_delete, name='api_comment_delete'),
     path('log-files/',             views.log_files,          name='log_files'),
+    # Печатные формы
+    path('print/',                       views.print_forms,    name='print_forms'),
+    path('print/<int:pk>/<str:fmt>/',    views.print_single,   name='print_single'),
+    path('print/selected/',              views.print_selected, name='print_selected'),
 ]

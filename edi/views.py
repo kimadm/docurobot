@@ -432,7 +432,8 @@ def api_webhook(request):
     try:
         raw = json.loads(request.body)
         client = DocrobotClient()
-        normalized = client.normalize_document(raw)
+        doc_type = raw.get('docType') or raw.get('doc_type', 'ORDER')
+        normalized = client.normalize_document(raw, doc_type)
         doc_id = normalized['docrobotId']
 
         if not doc_id:
@@ -589,13 +590,15 @@ def api_test_send(request):
         return Response({'error': 'xml обязателен'}, status=400)
     try:
         client = OneCClient()
-        code, resp = client.send(xml_str.encode('utf-8'), doc_type)
+        resp = client.send(xml_str.encode('utf-8'), doc_type)
+        code = resp.status_code
+        resp_text = resp.text
         ActivityLog.objects.create(
             level='info' if 200 <= code < 300 else 'warn',
             action='test_send',
-            message=f'Тест {doc_type}: HTTP {code} → {resp[:200]}',
+            message=f'Тест {doc_type}: HTTP {code} → {resp_text[:200]}',
         )
-        return Response({'http_status': code, 'response': resp, 'success': 200 <= code < 300})
+        return Response({'http_status': code, 'response': resp_text, 'success': 200 <= code < 300})
     except Exception as e:
         return Response({'error': str(e), 'success': False}, status=500)
 
@@ -989,6 +992,10 @@ def healthcheck(request):
     from django.db import connection
     from .models import ConnectionSettings, ActivityLog
 
+    # Timezone Алматы UTC+5 — объявляем сразу
+    from datetime import timezone as dt_tz, timedelta as dt_timedelta
+    almaty_tz = dt_tz(dt_timedelta(hours=5))
+
     checks = []
 
     # 1. База данных
@@ -1029,9 +1036,9 @@ def healthcheck(request):
         if last_poll:
             delta = timezone.now() - last_poll.created_at
             mins  = int(delta.total_seconds() // 60)
-            status = 'ok' if mins < 10 else ('warn' if mins < 60 else 'error')
+            status = 'ok' if mins < 5 else ('warn' if mins < 120 else 'error')
             checks.append({'name': 'Последний поллинг', 'status': status,
-                            'detail': f'{mins} мин назад · {last_poll.message[:80]}', 'icon': '🔄'})
+                            'detail': f'{mins} мин назад · {last_poll.created_at.astimezone(almaty_tz).strftime("%H:%M:%S")} · {last_poll.message[:60]}', 'icon': '🔄'})
         else:
             checks.append({'name': 'Последний поллинг', 'status': 'warn',
                             'detail': 'Поллинг ещё не запускался', 'icon': '🔄'})
@@ -1040,12 +1047,13 @@ def healthcheck(request):
                         'detail': str(e), 'icon': '🔄'})
 
     # Системная информация
+    now_almaty = timezone.now().astimezone(almaty_tz)
     sys_info = {
         'python':   sys.version.split()[0],
         'platform': platform.system() + ' ' + platform.release(),
         'django':   __import__('django').get_version(),
         'db_path':  str(__import__('django').conf.settings.DATABASES['default']['NAME']),
-        'time':     timezone.now().strftime('%d.%m.%Y %H:%M:%S'),
+        'time':     now_almaty.strftime('%d.%m.%Y %H:%M:%S') + ' (UTC+5)',
     }
 
     overall = 'ok'
